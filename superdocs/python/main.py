@@ -10,6 +10,8 @@ from langchain.agents import initialize_agent, Tool
 from langchain.agents import AgentType
 from langchain.utilities import MetaphorSearchAPIWrapper
 
+from fastapi.middleware.cors import CORSMiddleware
+
 import dotenv
 import uvicorn
 
@@ -21,14 +23,27 @@ import json
 
 import request_schemas
 from response_stream_callback import FrontendStreamCallback
-from saved_variable import SavedVariable
+from saved_variable import SavedList
 
 dotenv.load_dotenv()
 
 app = FastAPI()
 frontend_stream_callback = FrontendStreamCallback()
-chat = ChatOpenAI(callbacks=frontend_stream_callback)
-agent = Agent(callbacks=[frontend_stream_callback])
+
+chat = ChatOpenAI(callbacks=[frontend_stream_callback], streaming=True)
+
+origins = ["*"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# print(chat([HumanMessage(content="Testing 123")]))
+
 embeddings = OpenAIEmbeddings()
 
 home_directory = Path.home()
@@ -45,6 +60,7 @@ current_project_directory = ""
 
 @app.post("/set_current_project")
 async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
+    print("Setting current workspace folder to: ", data.directory)
     global current_project_directory
     global code_collection
     global documentation_collection
@@ -57,7 +73,7 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     documentation_collection_name = valid_range + "d"
 
     source_filepath = os.path.join(superdocs_directory, valid_range + "_sources.json")
-    sources = SavedVariable(source_filepath) # the last set of tools depends solely on the tools
+    sources = SavedList(source_filepath) # the last set of tools depends solely on the tools
     
     code_collection = client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
     # documentation_collection = client.get_or_create_collection(name=documentation_collection_name, embedding_function=embeddings)
@@ -71,7 +87,7 @@ async def send_message(data: request_schemas.MessageRequest):
 
 @app.post("/get_sources")
 async def get_sources():
-    if type(sources) == SavedVariable:
+    if type(sources) == SavedList:
         return {"ok": True, "sources": sources.get()}
     else:
         return {"ok": True, "sources": []}
@@ -80,7 +96,7 @@ async def get_sources():
 async def add_documentation_source(data: request_schemas.AddDocumentationSourceRequest):
     global sources
 
-    if type(sources) == SavedVariable:
+    if type(sources) == SavedList:
         tmp_sources = sources.get()
         tmp_sources.append(data.base_url)
         sources.set(tmp_sources)
@@ -91,7 +107,7 @@ async def add_documentation_source(data: request_schemas.AddDocumentationSourceR
 async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
     global sources
 
-    if type(sources) == SavedVariable:
+    if type(sources) == SavedList:
         tmp_sources = sources.get()
         tmp_sources.remove(data.base_url)
         sources.set(tmp_sources)
