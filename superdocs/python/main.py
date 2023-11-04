@@ -3,8 +3,14 @@ from pydantic import BaseModel
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage
 from langchain.embeddings import OpenAIEmbeddings
-from fastapi.middleware.cors import CORSMiddleware
+from langchain.agents import load_tools
+from langchain.llms import OpenAI
+from langchain.utilities import SerpAPIWrapper
+from langchain.agents import initialize_agent, Tool
+from langchain.agents import AgentType
+from langchain.utilities import MetaphorSearchAPIWrapper
 
+from fastapi.middleware.cors import CORSMiddleware
 
 import dotenv
 import uvicorn
@@ -23,6 +29,7 @@ dotenv.load_dotenv()
 
 app = FastAPI()
 frontend_stream_callback = FrontendStreamCallback()
+
 chat = ChatOpenAI(callbacks=[frontend_stream_callback], streaming=True)
 
 origins = ["*"]
@@ -114,3 +121,20 @@ async def reload_local_sources():
 
 if __name__ == "__main__":
     uvicorn.run(app, port=54323)
+    
+@tools.implementation
+llm = OpenAI(temperature=0)
+search = SerpAPIWrapper()
+tools = [
+    Tool(
+        name="Intermediate Answer",
+        func=search.run,
+        description="search engine tool",
+    )
+]
+self_ask_with_search = initialize_agent(
+    tools, llm, agent=AgentType.SELF_ASK_WITH_SEARCH, verbose=True
+)
+
+@agent.metaphor
+search = MetaphorSearchAPIWrapper()
