@@ -4,10 +4,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as express from 'express';
 import TerminalTool from './tools/terminal';
+import replaceTextInFile from './tools/finteract';
+import axios from 'axios';
 
 const app = express();
 app.use(express.json());
 
+app.get('/', (req, res) => {
+	res.send('Hello World!');
+});
+  
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -17,11 +23,9 @@ export function activate(context: vscode.ExtensionContext) {
 	console.log('Congratulations, your extension "superdocs" is now active!');
 
 	const provider = new WebviewViewProvider(context.extensionUri, context);
+
 	context.subscriptions.push(vscode.window.registerWebviewViewProvider(WebviewViewProvider.viewType, provider));
 
-	app.listen(54321, () => {
-		console.log("Extension listening from port 54321");
-	});
 }
 
 // This method is called when your extension is deactivated
@@ -44,6 +48,20 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 
 		this._view = webviewView;
 
+		if(vscode.workspace.workspaceFolders){
+			axios({
+				method: "post",
+				url: "http://127.0.0.1:54323/set_current_project",
+				data: {
+					directory: vscode.workspace.workspaceFolders[0]
+				},
+				headers: {
+					"Content-Type": "application/json",
+					// "Access-Control-Allow-Origin": "no-cors"
+				}
+			});
+		}
+
 		webviewView.webview.options = {
 			enableScripts: true,
 			localResourceRoots: [
@@ -54,21 +72,44 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
 
 		webviewView.webview.onDidReceiveMessage(data => {
-			switch (data.type) {
-				case "message":
-					// forward the message over to the backend
-					break;
+			console.log("Received message from frontend: ", data);
+			if(data.type == "replaceSnippet"){
+				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
 			}
 		});
 
+		let addSnippet = vscode.commands.registerCommand("superdocs.addSnippet", () => {
+			console.log("Selecting text");
+			const selection = vscode.window.activeTextEditor?.selection;
+			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
+			const language = vscode.window.activeTextEditor?.document.languageId;
+			const filepath = vscode.window.activeTextEditor?.document.uri.fsPath;
+			
+			webviewView.webview.postMessage({
+				type: "snippet",
+				content: {
+					code: selectedText,
+					language: language,
+					startIndex: -1,
+					endIndex: -1,
+					filepath: filepath
+				}
+			});
+		});
+
+		this._context.subscriptions.push(addSnippet);
+
 		app.post('/messages', (req, res) => {
+			console.log("Request to /messages: ", req.body);
 			webviewView.webview.postMessage({
 				type: "messages",
 				content: req.body
 			});
+			res.send({"ok": true})
 		});
 
 		app.post("/run_terminal", async (req, res) => {
+			console.log("Request to /run_terminal: ", req.body.content)
 			let terminalResponse = await this.terminalTool?.runTerminalCommand(req.body.content);
 			res.json({
 				content: terminalResponse
@@ -76,10 +117,15 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		app.get("/get_terminal", async (req, res) => {
+			console.log("Request to /get_terminal: ", req.body.content)
 			let terminalResponse = await this.terminalTool?.getTerminalContent();
 			res.json({
 				content: terminalResponse
 			});
+		});
+
+		app.listen(3005, () => {
+			console.log(`Example app listening on port 3005`)
 		});
 	}
 

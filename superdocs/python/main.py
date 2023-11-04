@@ -53,6 +53,7 @@ current_project_directory = ""
 
 @app.post("/set_current_project")
 async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
+    print("Setting current workspace folder to: ", data.directory)
     global current_project_directory
     global code_collection
     global documentation_collection
