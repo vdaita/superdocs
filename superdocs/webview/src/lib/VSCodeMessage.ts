@@ -1,13 +1,13 @@
 /* Source: https://github.com/codebycorey/vscode-todo-task-manager/blob/master/src/webview/src/lib/VSCodeMessage.ts */
 
-// declare const acquireVsCodeApi: Function;
-let acquireVsCodeApi = () => {
-    return {
-        postMessage: () => {},
-        getState: () => {},
-        setState: () => {}
-    }
-}
+declare const acquireVsCodeApi: Function;
+// let acquireVsCodeApi = () => {
+//     return {
+//         postMessage: () => {},
+//         getState: () => {},
+//         setState: () => {}
+//     }
+// }
 
 interface VSCodeApi {
     getState: () => any;

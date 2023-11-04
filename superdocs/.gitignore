@@ -4,7 +4,10 @@
 .env
 .env.local
 .DS_Store
+python/__pycache__
 
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+package-lock.json
