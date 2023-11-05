@@ -14,10 +14,13 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
                 if len(line) > 0:
                     gitignore_rules.append(line)
 
+    code_suffixes = [".py", ".js", ".jsx", ".tsx", ".cc", ".hpp", ".cpp", ".c", ".rb"] # make a better list
+
     loader = GenericLoader.from_filesystem(
         directory,
         glob="*",
         exclude=gitignore_rules,
+        suffixes=code_suffixes,
         parser=LanguageParser(parser_threshold=parser_threshold)
     )
 
