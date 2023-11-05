@@ -13,6 +13,8 @@ from langchain.callbacks.manager import CallbackManager
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.memory import ConversationBufferMemory
 from langchain.prompts import MessagesPlaceholder
+from langchain.vectorstores import Chroma
+import langchain_repo
 
 import dotenv
 import uvicorn
@@ -58,7 +60,8 @@ chroma_directory = os.path.join(superdocs_directory, "chroma")
 
 sources = None
 
-client = chromadb.PersistentClient(path=chroma_directory)
+chroma_client = chromadb.PersistentClient(path=chroma_directory)
+langchain_chroma = None
 code_collection = None
 documentation_collection = None
 
@@ -80,6 +83,8 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     global agent_chain
     global memory
     global chat_history
+    global embeddings
+    global langchain_chroma
     
     current_project_directory = data.directory
     alphanumeric_project_directory = re.sub(r'\W+', '', current_project_directory)
@@ -90,8 +95,9 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     source_filepath = os.path.join(superdocs_directory, valid_range + "_sources.json")
     sources = SavedList(source_filepath) # the last set of tools depends solely on the tools
     
-    code_collection = client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
-    
+    code_collection = chroma_client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
+    langchain_chroma = Chroma.from_texts(["Starter"], embeddings)
+
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     chat_history = MessagesPlaceholder(variable_name="chat_history")
     tools = get_tools(data.directory, callback_manager)
@@ -118,12 +124,11 @@ async def send_message(data: request_schemas.MessageRequest):
     agent_chain.invoke({"input": data.message})
     return {"ok": True}
 
-@app.post("/get_sources")
+@app.get("/get_sources")
 async def get_sources():
-    if type(sources) == SavedList:
-        return {"ok": True, "sources": sources.get()}
-    else:
-        return {"ok": True, "sources": []}
+    global langchain_chroma 
+    docs = langchain_chroma.get()
+    return langchain_chroma.get()
 
 @app.post("/add_documentation_source")
 async def add_documentation_source(data: request_schemas.AddDocumentationSourceRequest):
@@ -149,8 +154,14 @@ async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
 
 @app.post("/reload_local_sources")
 async def reload_local_sources():
-    
-    pass
+    global current_project_directory
+    global langchain_chroma
+
+    # print(langchain_chroma)
+    # langchain_chroma.delete_collection()
+    documents = langchain_repo.get_documents(current_project_directory)
+    langchain_chroma = Chroma.from_documents(documents, embeddings)
+    return {"ok": True}
 
 if __name__ == "__main__":
     uvicorn.run(app, port=54323)
