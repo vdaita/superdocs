@@ -28,16 +28,16 @@ class FrontendStreamCallback(BaseCallbackHandler):
         
         self.messages = flattened_messages
         # self.messages.append({
-        #     "role": "assistant",
+        #     "role": "ai",
         #     "content": ""
         # })
         self._update_frontend()
 
     def on_llm_new_token(self, token: str, **kwargs) -> None:
         # print("Received token: ", token)
-        if not(self.messages[-1]["role"] == "assistant"):
+        if not(self.messages[-1]["role"] == "ai"):
             self.messages.append({
-                "role": "assistant",
+                "role": "ai",
                 "content": ""
             })
         self.messages[-1]["content"] += token
@@ -84,7 +84,7 @@ class FrontendStreamCallback(BaseCallbackHandler):
         print("Sending from agent_action: ", new_message)
         
         self.messages.append({
-            "role": "assistant",
+            "role": "ai",
             "content": new_message
         })
         self._update_frontend()

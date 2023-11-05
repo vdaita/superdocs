@@ -12,6 +12,7 @@ from langchain.utilities import MetaphorSearchAPIWrapper
 from langchain.callbacks.manager import CallbackManager
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.memory import ConversationBufferMemory
+from langchain.prompts import MessagesPlaceholder
 
 import dotenv
 import uvicorn
@@ -63,7 +64,8 @@ documentation_collection = None
 
 current_project_directory = ""
 
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+memory = None
+chat_history = None
 
 @app.post("/set_current_project")
 async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
@@ -77,6 +79,7 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     global callback_manager
     global agent_chain
     global memory
+    global chat_history
     
     current_project_directory = data.directory
     alphanumeric_project_directory = re.sub(r'\W+', '', current_project_directory)
@@ -89,13 +92,19 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     
     code_collection = client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
     
+    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+    chat_history = MessagesPlaceholder(variable_name="chat_history")
     tools = get_tools(data.directory, callback_manager)
     agent_chain = initialize_agent(
         tools,
         chat,
         agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
         verbose=True,
-        agent_kwargs={},
+        agent_kwargs={
+            "history": [chat_history],
+            "memory_prompts": [chat_history],
+            'input_variables': ["chat_history", "agent_scratchpad", "input"]
+        },
         callback_manager=callback_manager,
         memory=memory
     )

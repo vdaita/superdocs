@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from 'react';
 import './App.css';
-import { Container, Card, Textarea, Group, Button, Box, Loader, Tabs, Text } from "@mantine/core"
+import { Container, Card, Textarea, Group, Button, Box, Loader, Tabs, Text, ScrollArea } from "@mantine/core"
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { Message } from './lib/Message';
@@ -24,7 +24,7 @@ function App() {
       let type = message.data.type;
       console.log(content, type);
       if(type == "messages"){
-        // console.log("Messages: ", content.messages, content.done);
+        console.log("Messages: ", content.messages, content.done);
         setMessages(content.messages);
         // setAllSnippets(getAllSnippetsForMessages(content.messages));
         if(content.done){
@@ -144,16 +144,20 @@ function App() {
 
             {messages.map((item, index) => (
                 <Card shadow="sm" m={4}>
-                  <EnhancedMarkdown content={item.content} snippets={allSnippets} role={item.role}/>
+                  <ScrollArea>
+                    <EnhancedMarkdown content={item.content} snippets={allSnippets} role={item.role}/>
+                  </ScrollArea>
                 </Card>
               ))}
 
             <Textarea disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)}/>
             {snippets.map((item, index) => (
               <Card shadow="sm" key={index}>
-                <SyntaxHighlighter language={item.language}>
-                  {item.code}
-                </SyntaxHighlighter>
+                <ScrollArea>
+                  <SyntaxHighlighter language={item.language}>
+                    {item.code}
+                  </SyntaxHighlighter>
+                </ScrollArea>
                 <Button variant="outline" onClick={() => deleteSnippet(index)}>Delete</Button>
               </Card>
             ))}
