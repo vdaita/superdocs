@@ -7,6 +7,8 @@ import TerminalTool from './tools/terminal';
 import replaceTextInFile from './tools/finteract';
 import axios from 'axios';
 
+import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
+
 const app = express();
 app.use(express.json());
 
@@ -76,6 +78,12 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			console.log("Received message from frontend: ", data);
 			if(data.type == "replaceSnippet"){
 				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
+			} else if (data.type === "saveCurrent") {
+				saveChanges();
+			} else if (data.type === "viewChanges") {
+				showChanges();
+			} else if (data.type === "revertChanges") {
+				revertChanges();
 			}
 		});
 

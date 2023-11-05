@@ -89,6 +89,9 @@ class FrontendStreamCallback(BaseCallbackHandler):
         })
         self._update_frontend()
 
+    def on_agent_finish(self, outputs, **kwargs):
+        print("Outputs: ", outputs)
+
     def _message_to_json(self, message):
         if type(message) == HumanMessage:
             return {"role": "human", "content": message.content}

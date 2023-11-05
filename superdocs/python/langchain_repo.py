@@ -4,6 +4,13 @@ from langchain.document_loaders.generic import GenericLoader
 from langchain.document_loaders.parsers import LanguageParser
 import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import HumanMessage, AIMessage, SystemMessage, Document
+from dotenv import load_dotenv
+
+load_dotenv(".env")
+
+gpt35 = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.2)
 
 def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parser_threshold=500):
     gitignore_path = os.path.join(directory, ignore_file)
@@ -26,5 +33,21 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
     )
 
     documents = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size = 500, chunk_overlap  = 20, length_function = len)
-    return text_splitter.split_documents(documents)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size = 800, chunk_overlap = 100, length_function = len)
+    split_documents = text_splitter.split_documents(documents)
+    writeup_documents = []
+    print("Split documents: ", len(split_documents))
+    for i in range(len(split_documents)):
+        code = split_documents[i].page_content
+        writeup = gpt35([SystemMessage(content="Write a short, 1 sentence, description of what this chunk of code does. Use variable and function names as much as possible."), HumanMessage(content=code)])
+        print(str(i) + ":", writeup.content)
+        new_metadata = split_documents[i].metadata
+        new_metadata["code"] = code
+
+        new_document = Document(
+            page_content=writeup.content,
+            metadata=new_metadata
+        )
+
+        writeup_documents.append(new_document)
+    return writeup_documents

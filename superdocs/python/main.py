@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage
 from langchain.embeddings import OpenAIEmbeddings
@@ -7,6 +7,7 @@ from langchain.agents import load_tools
 from langchain.llms import OpenAI
 from langchain.utilities import SerpAPIWrapper
 from langchain.agents import initialize_agent, Tool
+from langchain.tools import tool
 from langchain.agents import AgentType
 from langchain.utilities import MetaphorSearchAPIWrapper
 from langchain.callbacks.manager import CallbackManager
@@ -107,6 +108,15 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     chat_history = MessagesPlaceholder(variable_name="chat_history")
     tools = get_tools(data.directory, callback_manager)
+
+    def _handle_error(error) -> str:
+        print("Handling parsing errors privately")
+        after_action = error.split("Action:")
+        if len(after_action) > 1:
+            action_json = json.loads(after_action[1])
+            return action_json["action_input"]
+        return str(error)
+    
     agent_chain = initialize_agent(
         tools,
         chat,
@@ -118,9 +128,9 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
             'input_variables': ["chat_history", "agent_scratchpad", "input"]
         },
         callback_manager=callback_manager,
-        memory=memory
+        memory=memory,
+        handle_parsing_errors=_handle_error
     )
-
     # documentation_collection = client.get_or_create_collection(name=documentation_collection_name, embedding_function=embeddings)
 
     return {"ok": True}
@@ -158,6 +168,15 @@ async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
         return {"ok": True}
     return {"ok": False}
 
+class SearchInput(BaseModel):
+    query: str = Field()
+
+def create_vectorstore_search_function(local_vectorstore):
+    def search_vectorstore(query: str) -> str:
+        """Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching."""
+        return local_vectorstore.similarity_search_with_score(query, k=10)
+    return search_vectorstore
+
 @app.post("/reload_local_sources")
 async def reload_local_sources():
     global current_project_directory
@@ -172,16 +191,24 @@ async def reload_local_sources():
     documents = langchain_repo.get_documents(current_project_directory)
     langchain_chroma = Chroma.from_documents(documents, embeddings)
 
-    vectorstore_info = VectorStoreInfo(
-        name="codebase",
-        description="the codebase that the user is currently using",
-        vectorstore=langchain_chroma,
-    )
-    toolkit = VectorStoreToolkit(vectorstore_info=vectorstore_info)
-    vectorstore_tools = toolkit.get_tools()
+    # @tool
 
+    
     tools_copy = tools.copy()
-    tools_copy.extend(vectorstore_tools)
+    tools_copy.append(Tool.from_function(
+        func=create_vectorstore_search_function(langchain_chroma),
+        name="Search Vectorstore",
+        description="Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching.",
+        args_schema=SearchInput
+    ))
+
+    def _handle_error(error) -> str:
+        print("Handling parsing errors privately")
+        after_action = error.split("Action:")
+        if len(after_action) > 1:
+            action_json = json.loads(after_action[1])
+            return action_json["action_input"]
+        return str(error)
 
     agent_chain = initialize_agent(
         tools_copy,
@@ -191,11 +218,13 @@ async def reload_local_sources():
         agent_kwargs={
             "history": [chat_history],
             "memory_prompts": [chat_history],
-            'input_variables': ["chat_history", "agent_scratchpad", "input"]
+            'input_variables': ["chat_history", "agent_scratchpad", "input"],
+            "handle_parsing_errors": _handle_error
         },
         callback_manager=callback_manager,
         memory=memory
     )
+    # agent_chain.handle_parsing_errors = _handle_error
 
     return {"ok": True}
 

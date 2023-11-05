@@ -60,7 +60,6 @@ def gen_replacer(directory):
         #     print(f"An error occurred: {e}")
     return replace_text_in_file
 
-
 def get_tools(directory, cm):
     # search = MetaphorSearchAPIWrapper()
     search = GoogleSerperAPIWrapper()

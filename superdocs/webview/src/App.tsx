@@ -6,6 +6,7 @@ import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { Message } from './lib/Message';
 import { Snippet } from './lib/Snippet';
 import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter';
+import { dark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import axios, { all } from 'axios';
 import ReactJson from 'react-json-view';
 
@@ -71,6 +72,13 @@ function App() {
   }
 
   let sendMessage = () => {
+    VSCodeMessage.postMessage({
+      type: "saveCurrent",
+      content: {
+
+      }
+    });
+    
     let fullMessage = message;
     if(snippets.length > 0){
       fullMessage += "\n ### Code snippets: \n"
@@ -169,6 +177,28 @@ function App() {
 
   }
 
+  // let saveCurrent = () => {
+
+  // }
+
+  let viewChanges = () => {
+    VSCodeMessage.postMessage({
+      type: "viewChanges",
+      content: {
+
+      }
+    })
+  }
+
+  let revertChanges = () => {
+    VSCodeMessage.postMessage({
+      type: "revertChanges",
+      content: {
+
+      }
+    })
+  }
+
   return (
     <Container py='lg' px='md'>
       <Tabs defaultValue="chat">
@@ -193,7 +223,7 @@ function App() {
             {snippets.map((item, index) => (
               <Card shadow="sm" key={index}>
                 <ScrollArea>
-                  <SyntaxHighlighter language={item.language}>
+                  <SyntaxHighlighter language={item.language} style={dark}>
                     {item.code}
                   </SyntaxHighlighter>
                 </ScrollArea>
@@ -204,6 +234,12 @@ function App() {
             <Group my="sm">
               <Button disabled={loading} variant="default" onClick={() => sendMessage()}>Send to Agent</Button>
             </Group>
+
+            {messages.length >= 2 && <Group my="sm">
+              {/* <Button disabled={loading} variant="default" onClick={() => saveCurrent()}>Save Current</Button> */}
+              <Button disabled={loading} variant="default" onClick={() => viewChanges()}>View Changes</Button>
+              <Button disabled={loading} variant="default" onClick={() => revertChanges()}>Revert Changes</Button>
+            </Group>}
           </Box>
         </Tabs.Panel>
 
