@@ -3,6 +3,7 @@ from langchain.document_loaders import GitLoader
 from langchain.document_loaders.generic import GenericLoader
 from langchain.document_loaders.parsers import LanguageParser
 import os
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parser_threshold=500):
     gitignore_path = os.path.join(directory, ignore_file)
@@ -24,4 +25,6 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
         parser=LanguageParser(parser_threshold=parser_threshold)
     )
 
-    return loader.load()
+    documents = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size = 500, chunk_overlap  = 20, length_function = len)
+    return text_splitter.split_documents(documents)

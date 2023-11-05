@@ -16,7 +16,14 @@ from langchain.agents import AgentType
 from dotenv import load_dotenv
 from trafilatura import fetch_url, extract
 from pydantic import BaseModel, Field
+from langchain.utilities import GoogleSerperAPIWrapper
 import os
+
+from langchain.agents.agent_toolkits import (
+    create_vectorstore_agent,
+    VectorStoreToolkit,
+    VectorStoreInfo,
+)
 
 load_dotenv(".env")
 
@@ -55,10 +62,18 @@ def gen_replacer(directory):
 
 
 def get_tools(directory, cm):
-    search = MetaphorSearchAPIWrapper()
-    tools = []
-    metaphor_tool = MetaphorSearchResults(api_wrapper=search)
-    tools.append(metaphor_tool)
+    # search = MetaphorSearchAPIWrapper()
+    search = GoogleSerperAPIWrapper()
+    tools = [
+        Tool(
+            name="Google Search",
+            func=search.run,
+            description="useful for when you need to ask with search",
+        )
+    ]
+
+    # metaphor_tool = MetaphorSearchResults(api_wrapper=search)
+    # tools.append(metaphor_tool)
 
     file_toolkit = FileManagementToolkit(
         root_dir=directory,

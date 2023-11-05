@@ -65,7 +65,7 @@ export default function EnhancedMarkdown({ content, snippets, role }) {
                                     PreTag="div"
                                 />
 
-                                {(role === "assistant" && snippets.length > 0) && <Group style={{flexWrap: "wrap"}}>
+                                {(role === "ai" && snippets.length > 0) && <Group style={{flexWrap: "wrap"}}>
                                     Replace in snippet:
                                     {/* <Text>{JSON.stringify(snippets)}</Text> */}
                                     {snippets.map((item, index) => (

@@ -16,6 +16,12 @@ from langchain.prompts import MessagesPlaceholder
 from langchain.vectorstores import Chroma
 import langchain_repo
 
+from langchain.agents.agent_toolkits import (
+    create_vectorstore_agent,
+    VectorStoreToolkit,
+    VectorStoreInfo,
+)
+
 import dotenv
 import uvicorn
 
@@ -37,7 +43,7 @@ frontend_stream_callback = FrontendStreamCallback()
 
 callback_manager = CallbackManager([frontend_stream_callback])
 
-chat = ChatOpenAI(model="gpt-3.5-turbo-16k", temperature=0.4, callback_manager=callback_manager, streaming=True)
+chat = ChatOpenAI(model="gpt-4", temperature=0, callback_manager=callback_manager, streaming=True)
 agent_chain = None
 
 origins = ["*"]
@@ -155,12 +161,42 @@ async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
 @app.post("/reload_local_sources")
 async def reload_local_sources():
     global current_project_directory
+    global callback_manager
+    global chat
+    global tools
     global langchain_chroma
+    global agent_chain
 
     # print(langchain_chroma)
     # langchain_chroma.delete_collection()
     documents = langchain_repo.get_documents(current_project_directory)
     langchain_chroma = Chroma.from_documents(documents, embeddings)
+
+    vectorstore_info = VectorStoreInfo(
+        name="codebase",
+        description="the codebase that the user is currently using",
+        vectorstore=langchain_chroma,
+    )
+    toolkit = VectorStoreToolkit(vectorstore_info=vectorstore_info)
+    vectorstore_tools = toolkit.get_tools()
+
+    tools_copy = tools.copy()
+    tools_copy.extend(vectorstore_tools)
+
+    agent_chain = initialize_agent(
+        tools_copy,
+        chat,
+        agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        agent_kwargs={
+            "history": [chat_history],
+            "memory_prompts": [chat_history],
+            'input_variables': ["chat_history", "agent_scratchpad", "input"]
+        },
+        callback_manager=callback_manager,
+        memory=memory
+    )
+
     return {"ok": True}
 
 if __name__ == "__main__":
