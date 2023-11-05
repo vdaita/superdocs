@@ -53,7 +53,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				method: "post",
 				url: "http://127.0.0.1:54323/set_current_project",
 				data: {
-					directory: vscode.workspace.workspaceFolders[0]
+					directory: vscode.workspace.workspaceFolders[0].uri.fsPath
+					
 				},
 				headers: {
 					"Content-Type": "application/json",
@@ -90,8 +91,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				content: {
 					code: selectedText,
 					language: language,
-					startIndex: -1,
-					endIndex: -1,
+					startIndex: undefined,
+					endIndex: undefined,
 					filepath: filepath
 				}
 			});
