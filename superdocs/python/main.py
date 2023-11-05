@@ -9,8 +9,9 @@ from langchain.utilities import SerpAPIWrapper
 from langchain.agents import initialize_agent, Tool
 from langchain.agents import AgentType
 from langchain.utilities import MetaphorSearchAPIWrapper
-
+from langchain.callbacks.manager import CallbackManager
 from fastapi.middleware.cors import CORSMiddleware
+from langchain.memory import ConversationBufferMemory
 
 import dotenv
 import uvicorn
@@ -24,13 +25,17 @@ import json
 import request_schemas
 from response_stream_callback import FrontendStreamCallback
 from saved_variable import SavedList
+from tools import get_tools
 
-dotenv.load_dotenv()
+dotenv.load_dotenv(".env")
 
 app = FastAPI()
 frontend_stream_callback = FrontendStreamCallback()
 
-chat = ChatOpenAI(callbacks=[frontend_stream_callback], streaming=True)
+callback_manager = CallbackManager([frontend_stream_callback])
+
+chat = ChatOpenAI(model="gpt-3.5-turbo-16k", temperature=0.4, callback_manager=callback_manager, streaming=True)
+agent_chain = None
 
 origins = ["*"]
 
@@ -58,6 +63,8 @@ documentation_collection = None
 
 current_project_directory = ""
 
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+
 @app.post("/set_current_project")
 async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     print("Setting current workspace folder to: ", data.directory)
@@ -65,6 +72,11 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     global code_collection
     global documentation_collection
     global sources
+    global tools
+    global chat
+    global callback_manager
+    global agent_chain
+    global memory
     
     current_project_directory = data.directory
     alphanumeric_project_directory = re.sub(r'\W+', '', current_project_directory)
@@ -76,13 +88,25 @@ async def set_current_project(data: request_schemas.SetCurrentProjectRequest):
     sources = SavedList(source_filepath) # the last set of tools depends solely on the tools
     
     code_collection = client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
+    
+    tools = get_tools(data.directory, callback_manager)
+    agent_chain = initialize_agent(
+        tools,
+        chat,
+        agent=AgentType.STRUCTURED_CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+        verbose=True,
+        agent_kwargs={},
+        callback_manager=callback_manager,
+        memory=memory
+    )
+
     # documentation_collection = client.get_or_create_collection(name=documentation_collection_name, embedding_function=embeddings)
 
     return {"ok": True}
 
 @app.post("/send_message")
 async def send_message(data: request_schemas.MessageRequest):
-    chat([HumanMessage(content=data.message)])
+    agent_chain.invoke({"input": data.message})
     return {"ok": True}
 
 @app.post("/get_sources")
@@ -121,20 +145,3 @@ async def reload_local_sources():
 
 if __name__ == "__main__":
     uvicorn.run(app, port=54323)
-    
-@tools.implementation
-llm = OpenAI(temperature=0)
-search = SerpAPIWrapper()
-tools = [
-    Tool(
-        name="Intermediate Answer",
-        func=search.run,
-        description="search engine tool",
-    )
-]
-self_ask_with_search = initialize_agent(
-    tools, llm, agent=AgentType.SELF_ASK_WITH_SEARCH, verbose=True
-)
-
-@agent.metaphor
-search = MetaphorSearchAPIWrapper()
