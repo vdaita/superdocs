@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage
 from langchain.embeddings import OpenAIEmbeddings
+import github_load.py as gh
+import web_load.py as web
 
 import dotenv
 import uvicorn
@@ -80,8 +82,18 @@ async def add_documentation_source(data: request_schemas.AddDocumentationSourceR
         return {"ok": True}
     return {"ok": False}
 
-@app.post("/delete_source")
-async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
+@app.post("/add_source")
+async def add_source(data: request_schemas.AddSourceRequest):
+    # Check if the source is a GitHub repository
+    if gh.is_github_repo(data.url):
+        gh.process_github_repo(data.url)
+    else:
+        web.fetch_webpage_and_store_in_chromadb(data.url)
+    
+    return {"ok": True}
+
+@app.post("/delete_doc_source")
+async def delete_documentation_source(data: request_schemas.DeleteDocumentationSourceRequest):
     global sources
 
     if type(sources) == SavedVariable:
@@ -90,6 +102,10 @@ async def delete_source(data: request_schemas.DeleteDocumentationSourceRequest):
         sources.set(tmp_sources)
         return {"ok": True}
     return {"ok": False}
+
+@app.post("/delete_source")
+async def delete_source(data: request_schemas.DeleteSourceRequest):
+    
 
 @app.post("/reload_local_sources")
 async def reload_local_sources():
