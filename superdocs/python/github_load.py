@@ -40,7 +40,7 @@ def process_github_repo(url):
                 document_contents.append(file_content)
 
         # Store all Langchain documents in ChromaDB
-        mp.client.store_documents(langchain_documents)
+        mp.client.add(langchain_documents)
 
         return langchain_documents
     except Exception as e:

@@ -29,7 +29,7 @@ def fetch_webpage_and_store_in_chromadb(url):
             )
 
             # Store the Langchain document in your ChromaDB
-            mp.client.store_document(langchain_document)
+            mp.client.add(langchain_document)
 
             return True
         else:
