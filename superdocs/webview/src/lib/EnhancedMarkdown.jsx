@@ -44,7 +44,7 @@ export default function EnhancedMarkdown({ content, snippets, role }) {
                             if(match[1] === 'json'){
                                 try {
                                     let jsonValue = JSON.parse(String(children).replace(/\n$/, ''));
-                                    return <ReactJson src={jsonValue}/>
+                                    return <ReactJson theme="hopscotch" src={jsonValue}/>
                                 } catch (e) {
                                     // continue on
                                 }

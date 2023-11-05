@@ -7,14 +7,19 @@ import { Message } from './lib/Message';
 import { Snippet } from './lib/Snippet';
 import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter';
 import axios, { all } from 'axios';
+import ReactJson from 'react-json-view';
 
 function App() {
 
   const [message, setMessage] = useState("");
+
   const [loading, setLoading] = useState(false);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   
+  const [sources, setSources] = useState<any[]>([]);
+
   const [allSnippets, setAllSnippets] = useState<Snippet[]>([]);
 
   useEffect(() => {
@@ -118,8 +123,42 @@ function App() {
     setAllSnippets((oldArray) => snippetsWithoutIndex(oldArray, index));
   }
 
-  let getSources = () => {
+  let getSources = async () => {
+    setLoading(true);
+    let sources = await axios({
+      method: "get",
+      url: "http://127.0.0.1:54323/get_sources"
+    });
 
+    console.log(sources.data);
+
+    let data = sources.data;
+    let reformatted = []
+    for(var i = 0; i < data.documents.length; i++){
+      reformatted.push({
+        document: data.documents[i],
+        id: data.ids[i],
+        metadata: data.metadatas[i]
+      });
+    }
+    console.log("Reformatted: ", reformatted);
+    setSources(reformatted);
+
+    setLoading(false);
+  }
+
+  let reloadLocalCodebase = async () => {
+    console.log("Running reloadLocalCodebase");
+    setLoading(true);
+    try {
+      let res = await axios({
+        method: "post",
+        url: "http://127.0.0.1:54323/reload_local_sources"
+      });
+    } catch (e) {
+      console.error("Error: ", e);
+    }
+    setLoading(false);
   }
 
   let addSource = () => {
@@ -169,7 +208,16 @@ function App() {
         </Tabs.Panel>
 
         <Tabs.Panel value="sources">
+          <Box m="lg">
+            <Button disabled={loading} onClick={() => getSources()} m="sm">Check sources</Button>
+            <Button disabled={loading} onClick={() => reloadLocalCodebase()} m="sm">Load/reload local codebase</Button>
 
+            {loading && <Loader/>}
+          
+            {sources.map((item, index) => (
+              <ReactJson theme="hopscotch" src={item} collapsed={true}/>
+            ))}
+          </Box>
         </Tabs.Panel>
 
       </Tabs>
