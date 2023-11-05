@@ -31,10 +31,8 @@ async function showChanges(uri: vscode.Uri, langchainChanges: LangchainChange) {
       const textDocument = await vscode.workspace.openTextDocument(uri);
       const textEditor = await vscode.window.showTextDocument(textDocument);
 
-      // Apply Langchain changes to the text editor
-      textEditor.edit(editBuilder => {
-          editBuilder.replace(langchainChanges.range, langchainChanges.content);
-      });
+      //
+      vscode.commands.executeCommand('workbench.view.scm');
 
       // Ask the user if they want to commit the changes
       const commitChanges = await vscode.window.showInformationMessage(
