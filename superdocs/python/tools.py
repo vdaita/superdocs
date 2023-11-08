@@ -60,7 +60,7 @@ def gen_replacer(directory):
         #     print(f"An error occurred: {e}")
     return replace_text_in_file
 
-def get_tools(directory, cm):
+def get_tools(directory):
     # search = MetaphorSearchAPIWrapper()
     search = GoogleSerperAPIWrapper()
     tools = [
@@ -89,7 +89,7 @@ def get_tools(directory, cm):
     )
 
     tools.append(get_website_content)
-    tools.append(ShellTool(callback_manager=cm))
+    tools.append(ShellTool())
     tools.append(replace_tool)
     return tools
 
@@ -107,3 +107,23 @@ def get_tools_non_editing(directory):
     tools.extend(file_toolkit.get_tools())
     tools.append(get_website_content)
     return tools
+
+def generate_tools_for_directory():
+    pass
+
+# https://github.com/microsoft/autogen/blob/main/notebook/agentchat_langchain.ipynb
+def generate_autogen_tool_schema(tool):
+    function_schema = {
+        "name": tool.name.lower().replace (' ', '_'),
+        "description": tool.description,
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    }
+
+    if tool.args is not None:
+      function_schema["parameters"]["properties"] = tool.args
+
+    return function_schema

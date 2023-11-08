@@ -16,6 +16,7 @@ from langchain.memory import ConversationBufferMemory
 from langchain.prompts import MessagesPlaceholder
 from langchain.vectorstores import Chroma
 import langchain_repo
+import autogen
 
 from langchain.agents.agent_toolkits import (
     create_vectorstore_agent,
@@ -35,7 +36,7 @@ import json
 import request_schemas
 from response_stream_callback import FrontendStreamCallback
 from saved_variable import SavedList
-from tools import get_tools
+from tools import get_tools, generate_autogen_tool_schema
 
 dotenv.load_dotenv(".env")
 
@@ -209,7 +210,7 @@ async def reload_local_sources():
             action_json = json.loads(after_action[1])
             return action_json["action_input"]
         return str(error)
-
+    
     agent_chain = initialize_agent(
         tools_copy,
         chat,
@@ -224,7 +225,7 @@ async def reload_local_sources():
         callback_manager=callback_manager,
         memory=memory
     )
-    # agent_chain.handle_parsing_errors = _handle_error
+    agent_chain.handle_parsing_errors = _handle_error
 
     return {"ok": True}
 

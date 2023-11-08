@@ -6,6 +6,7 @@ import * as express from 'express';
 import TerminalTool from './tools/terminal';
 import replaceTextInFile from './tools/finteract';
 import axios from 'axios';
+import { exec } from 'child_process';
 
 import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
 
@@ -51,19 +52,21 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		this._view = webviewView;
 
 		if(vscode.workspace.workspaceFolders){
-			axios({
-				method: "post",
-				url: "http://127.0.0.1:54323/set_current_project",
-				data: {
-					directory: vscode.workspace.workspaceFolders[0].uri.fsPath
+			// exec("python /Users/vijaydaita/Files/projects/superdocs/superdocs-extension-bravo/superdocs/python/main_autogen.py " + vscode.workspace.workspaceFolders[0].uri.fsPath);
+			// axios({
+			// 	method: "post",
+			// 	url: "http://127.0.0.1:54323/set_current_project",
+			// 	data: {
+			// 		directory: vscode.workspace.workspaceFolders[0].uri.fsPath
 					
-				},
-				headers: {
-					"Content-Type": "application/json",
-					// "Access-Control-Allow-Origin": "no-cors"
-				}
-			});
+			// 	},
+			// 	headers: {
+			// 		"Content-Type": "application/json",
+			// 		// "Access-Control-Allow-Origin": "no-cors"
+			// 	}
+			// });
 		}
+
 
 		webviewView.webview.options = {
 			enableScripts: true,

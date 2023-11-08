@@ -78,7 +78,7 @@ function App() {
 
       }
     });
-    
+
     let fullMessage = message;
     if(snippets.length > 0){
       fullMessage += "\n ### Code snippets: \n"
@@ -106,7 +106,7 @@ function App() {
 
     setMessage("");
     setSnippets([]);
-    setLoading(true);
+    // setLoading(true);
   }
 
   let snippetsWithoutIndex = (arr: Snippet[], index: number) => {
@@ -199,6 +199,14 @@ function App() {
     })
   }
 
+  let handleKeyPress = (event: any) => {
+      // console.log(event);
+      if(event.key === 'Enter') {
+          console.log("Sending message on enter");
+          sendMessage();
+      }
+  }
+
   return (
     <Container py='lg' px='md'>
       <Tabs defaultValue="chat">
@@ -219,7 +227,8 @@ function App() {
                 </Card>
               ))}
 
-            <Textarea disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)}/>
+            <Text m="sm" size="xs">Press Enter to submit and Shift-Enter for newline.</Text>
+            <Textarea disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={handleKeyPress}/>
             {snippets.map((item, index) => (
               <Card shadow="sm" key={index}>
                 <ScrollArea>
