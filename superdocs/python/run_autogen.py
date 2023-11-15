@@ -4,10 +4,11 @@ import os
 from dotenv import load_dotenv
 from tools import generate_autogen_tool_schema, get_tools
 import autogen
+# from langchain.vectorstores import Chroma
 
 load_dotenv(".env")
 
-def setup(directory):
+def setup(directory, vectorstore=None):
     global llm_config
 
     config_list = [
@@ -30,6 +31,8 @@ def setup(directory):
     }
 
     tools = get_tools(directory)
+    # if vectorstore:
+    #     tools.append(create_vectorstore_search_function(vectorstore))
 
     for tool in tools:
         llm_config["functions"].append(generate_autogen_tool_schema(tool))
@@ -37,11 +40,17 @@ def setup(directory):
 
     return llm_config, function_map
 
-def create_vectorstore_search_function(local_vectorstore):
-    def search_vectorstore(query: str) -> str:
-        """Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching."""
-        return local_vectorstore.similarity_search_with_score(query, k=10)
-    return search_vectorstore
+# def create_vectorstore_search_function(local_vectorstore):
+#     def search_vectorstore(query: str) -> str:
+#         """Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching."""
+#         return local_vectorstore.similarity_search_with_score(query, k=10)
+#     return search_vectorstore
+
+def create_code_vectorstore_search_function(code_vectorstore):
+    pass
+
+def create_documentation_vectorstore_search_function(documentation_vectorstore):
+    pass
 
 def run(folder_path: str):
     llm_config, function_map = setup(folder_path)
@@ -66,7 +75,7 @@ def run(folder_path: str):
 
     user_proxy.initiate_chat(
         assistant_agent,
-        message="Ask the user what task they would like to complete."
+        message="Ask the user what task they would like to complete. If you are unfamiliar with a term or using an external API, make sure you search for the right documentation."
     )
 
 if __name__ == "__main__":

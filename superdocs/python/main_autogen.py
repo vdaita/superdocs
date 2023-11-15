@@ -21,7 +21,7 @@ import sys
 import logging
 import time
 import types
-import io
+from io import StringIO
 from contextlib import redirect_stdout, asynccontextmanager, contextmanager
 import threading
 from threading import Thread
@@ -52,34 +52,23 @@ from tools import get_tools, generate_autogen_tool_schema
 
 dotenv.load_dotenv(".env")
 
-app = FastAPI()
 agent_chain = None
 
 origins = ["*"]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-
 embeddings = OpenAIEmbeddings()
 home_directory = Path.home()
 superdocs_directory = os.path.join(home_directory, ".superdocs")
-chroma_directory = os.path.join(superdocs_directory, "chroma")
+database_directory = os.path.join(superdocs_directory, "chroma")
 
-chroma_client = chromadb.PersistentClient(path=chroma_directory)
+chroma_client = chromadb.PersistentClient(path=database_directory)
 langchain_chroma = None
 code_collection = None
 documentation_collection = None
 
 current_project_directory = ""
 
-interface_stringio = io.StringIO()
+interface_stringio = StringIO()
 user_proxy_thread = None
 
 llm_config = {}
@@ -88,62 +77,24 @@ user_proxy = None
 
 autogen_runtime = None
 
-def setup(tools):
-    global llm_config
-    global assistant_agent
-    global user_proxy
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    user_proxy_thread.join()
 
-    config_list = [
-        {
-            "model": "gpt-4-1106-preview",
-            "api_key": os.environ["OPENAI_API_KEY"]
-        }
-    ]
-
-    llm_config = {
-        "functions": [
-
-        ],
-        "config_list": config_list,
-        "timeout": 120
-    }
-
-    function_map = {
-
-    }
-    
-    for tool in tools:
-        llm_config["functions"].append(generate_autogen_tool_schema(tool))
-        function_map[tool.name] = tool._run
-
-    # user_proxy = autogen.UserProxyAgent(
-    #     name="user_proxy",
-    #     is_termination_msg=lambda x: x.get("content", "") and x.get("content", "").rstrip().endswith("TERMINATE"),
-    #     human_input_mode="ALWAYS",
-    #     max_consecutive_auto_reply=5,
-    #     code_execution_config=False
-    # )
-
-    # # Register the tool and start the conversation
-    # user_proxy.register_function(
-    #     function_map=function_map
-    # )
-
-    # assistant_agent = autogen.AssistantAgent(
-    #     name="chatbot",
-    #     system_message="For coding tasks, only use the functions you have been provided with.",
-    #     llm_config=llm_config
-    # )
-
-    return user_proxy
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.post("/send_message")
 async def send_message(data: request_schemas.MessageRequest):
     global autogen_runtime
-
     print("Printing: ", data.message, " to standard out")
-    # sys.stdout.write(data.message)
-    # sys.stdout.flush()
     autogen_runtime.stdin.write(data.message + "\n")
     autogen_runtime.stdin.flush()
     return {"ok": True}
@@ -157,12 +108,6 @@ async def get_sources():
 class SearchInput(BaseModel):
     query: str = Field()
 
-def create_vectorstore_search_function(local_vectorstore):
-    def search_vectorstore(query: str) -> str:
-        """Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching."""
-        return local_vectorstore.similarity_search_with_score(query, k=10)
-    return search_vectorstore
-
 @app.post("/reload_local_sources")
 async def reload_local_sources():
     global current_project_directory
@@ -175,41 +120,26 @@ async def reload_local_sources():
     documents = langchain_repo.get_documents(current_project_directory)
     langchain_chroma = Chroma.from_documents(documents, embeddings)
 
-    # @tool
-    tools_copy = tools.copy()
-    tools_copy.append(Tool.from_function(
-        func=create_vectorstore_search_function(langchain_chroma),
-        name="Search Vectorstore",
-        description="Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching.",
-        args_schema=SearchInput
-    ))
-    setup(tools_copy) 
-    user_proxy.initiate_chat(
-        assistant_agent,
-        message="Ask the user what he would like to do.",
-        llm_config=llm_config
-    )   
-
     return {"ok": True}
 
 def _update_frontend(message, base_url="http://localhost:3005"):
     # print("Sending: ", self.messages, done_loading)
     global interface_stringio
     global autogen_runtime
-    print("Test2")
+    # print("Test2")
     try:
         # Filtering observations cause showing that output properly is a menace
         # autogen_runtime.stdout.seek(0)
         if not(autogen_runtime) == None:
-            print("Test3")
+            # print("Test3")
             # print("Stdout: ", autogen_runtime.stdout.read())
         
-            filtered_messages = [{
-                "role": "system",
-                "content": message
-            }]
+            filtered_messages = [
+                {"role": "system",
+                 "content": message}
+            ]
 
-            print(filtered_messages)
+            # print(filtered_messages)
 
             payload_json = {
                 "messages": filtered_messages,
@@ -221,36 +151,6 @@ def _update_frontend(message, base_url="http://localhost:3005"):
             requests.post(base_url + "/messages", json=payload_json, headers=headers)
     except Exception as e:
         print("There was an error sending the message: ", e)
-
-
-def _send_every_interval():
-    global interface_stringio
-    global autogen_runtime
-
-    threading.Timer(1.0, _send_every_interval).start()
-    # print("Test")
-    # print(interface_stringio.read())
-    # if autogen_runtime:
-    #     print(autogen_runtime.stdout.read())
-    _update_frontend()
-
-# @contextmanager
-# def redirect_stdin_stdout():
-#     global interface_stringio
-
-#     sys.stdout = interface_stringio
-#     sys.stdin = interface_stringio
-#     yield
-
-@contextmanager
-def custom_redirection(fileobj):
-    old = sys.stdout
-    sys.stdout = fileobj
-    try:
-        yield fileobj
-    finally:
-        sys.stdout = old
-
     
 def generate_chat_start_thread_function(folder_name):
     def chat_start_thread_function():
@@ -266,24 +166,7 @@ def generate_chat_start_thread_function(folder_name):
                 if(char == "\n"):
                     total_output += " "
                 _update_frontend(total_output)
-            # for line in p.stdout:
-            #     total_output += line
-            #     print(line, end='')
-                # _update_frontend(total_output)
     return chat_start_thread_function
-        
-    # print("Test 2")
-    # with open('test.txt', 'w') as out:
-    #     with custom_redirection(interface_stringio):
-    #         print('This text is redirected to file')
-    #         print('So is this string')
-    #     print('This text is printed to stdout')
-    # print(interface_stringio.read())
-
-        # user_proxy.initiate_chat(
-        #     assistant_agent,
-        #     message="Ask the user what task they would like to complete."
-        # )
 
 def start_server(folder_name: str, port: int = 54323, frontend_port: int = 3005):
     print("Setting current workspace folder to: ", folder_name)
@@ -313,18 +196,6 @@ def start_server(folder_name: str, port: int = 54323, frontend_port: int = 3005)
     code_collection = chroma_client.get_or_create_collection(name=code_collection_name, embedding_function=embeddings) # separate collection for code and documentation
     langchain_chroma = Chroma.from_texts(["Starter"], embeddings)
 
-    tools = get_tools(folder_name)
-    tools.append(Tool.from_function(
-        func=create_vectorstore_search_function(langchain_chroma),
-        name="Search Vectorstore",
-        description="Runs semantic search on the current codebase. Useful for queries that are too semantically complex for regular matching.",
-        args_schema=SearchInput
-    ))
-
-    setup(tools)
-    # _send_every_interval(1000)
-    # _send_every_interval()
-    # chat_start_thread_function(folder_name)
     user_proxy_thread = Thread(target=generate_chat_start_thread_function(folder_name))
     user_proxy_thread.start()
     uvicorn.run(app, port=port)

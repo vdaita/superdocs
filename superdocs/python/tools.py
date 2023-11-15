@@ -17,6 +17,8 @@ from dotenv import load_dotenv
 from trafilatura import fetch_url, extract
 from pydantic import BaseModel, Field
 from langchain.utilities import GoogleSerperAPIWrapper
+from langchain.utilities import SerpAPIWrapper
+from googlesearch import search
 import os
 
 from langchain.agents.agent_toolkits import (
@@ -33,6 +35,15 @@ def get_website_content(url: str) -> str:
     downloaded = fetch_url(url)
     result = extract(downloaded)
     return result
+
+@tool("google_search", return_direct=True)
+def get_google_search(query: str) -> str:
+     """Performs a Google search on your query."""
+     return search(query, num_results=20)
+    
+
+class MarkdownReadFile():
+    
 
 class ReplaceTextInFileInput(BaseModel):
     filepath: str = Field(description="Filepath to file you want to modify, relative to the current directory")
@@ -65,7 +76,7 @@ def get_tools(directory):
     search = GoogleSerperAPIWrapper()
     tools = [
         Tool(
-            name="Google Search",
+            name="google_search",
             func=search.run,
             description="useful for when you need to ask with search",
         )
@@ -83,7 +94,7 @@ def get_tools(directory):
 
     replace_tool = StructuredTool.from_function(
         func=gen_replacer(directory),
-        name="Replace Text In File",
+        name="replace_text_in_file",
         description="Useful for when you want to replace one piece of text in a file with another piece of text.",
         args_schema=ReplaceTextInFileInput
     )
@@ -91,6 +102,9 @@ def get_tools(directory):
     tools.append(get_website_content)
     tools.append(ShellTool())
     tools.append(replace_tool)
+
+    # print("Returning tools: ", tools)
+
     return tools
 
 def get_tools_non_editing(directory):

@@ -31,6 +31,27 @@ function App() {
       console.log(content, type);
       if(type == "messages"){
         console.log("Messages: ", content.messages, content.done);
+
+        let systemMessage = content.messages[0].content;
+        let segments = systemMessage.split("--------------------------------------------------------------------------------");
+        let filteredMessages = [];
+        for(var i = 0; i < segments; i++){
+          let role = segments[i].split(":")[0];
+          let content = segments[i].replace(role, "");
+          filteredMessages.push({
+            role: role,
+            content: content
+          });
+        }
+
+        if(filteredMessages.length > 0){
+          if(filteredMessages.at(-1)?.role.toUpperCase().contains("PROVIDE FEEDBACK TO CHATBOT. PRESS ENTER TO SKIP AND USE AUTO-REPLY, OR TYPE 'EXIT' TO END THE CONVERSATION:")){
+            setLoading(false);
+            filteredMessages.at(-1)!.role = filteredMessages.at(-1)?.role.split(".")[0];
+            filteredMessages.at(-1)!.content = filteredMessages.at(-1)?.role.split(".")[1];
+          }
+        }
+
         setMessages(content.messages);
         // setAllSnippets(getAllSnippetsForMessages(content.messages));
         if(content.done){
@@ -106,7 +127,7 @@ function App() {
 
     setMessage("");
     setSnippets([]);
-    // setLoading(true);
+    setLoading(true);
   }
 
   let snippetsWithoutIndex = (arr: Snippet[], index: number) => {
