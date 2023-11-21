@@ -1,4 +1,6 @@
 export interface Message {
-    role: string, 
-    content: string
+    from: string, 
+    to: string,
+    content: string | undefined | null,
+    content_object: object | undefined | null 
 }

@@ -43,12 +43,18 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
 	private terminalTool?: TerminalTool;
+	private timeLastResponseProcessed?: number;
+	private mostRecentResponse?: any;
+	private messages?: any[];
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _context: vscode.ExtensionContext
 	) {
 		this.terminalTool = new TerminalTool();
+		this.messages = [];
+		this.timeLastResponseProcessed = 0;
+		this.mostRecentResponse = "";
 	 }
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
@@ -63,6 +69,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			],
 			
 		}
+		
 
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
 
@@ -76,6 +83,15 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				showChanges();
 			} else if (data.type === "revertChanges") {
 				revertChanges();
+			} else if (data.type === "response") {
+				this.mostRecentResponse = data.content;
+				this.timeLastResponseProcessed = Date.now();
+			} else if (data.type === "reset"){
+				this.messages = [];
+				webviewView.webview.postMessage({
+					type: "messages",
+					content: this.messages
+				});
 			}
 		});
 
@@ -100,11 +116,27 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 
 		this._context.subscriptions.push(addSnippet);
 
+		app.get("/get_user_response", async (req, res) => {
+			console.log("Request to /get_user_response: ", req.body);
+			webviewView.webview.postMessage({
+				type: "responseRequest"
+			});
+			let requestTime = Date.now();
+			while(this.timeLastResponseProcessed! < requestTime){
+				console.log("Checking response: ", this.timeLastResponseProcessed, requestTime);
+				await new Promise(resolve => setTimeout(resolve, 100));
+			}
+			res.send({
+				message: this.mostRecentResponse
+			});
+		});
+
 		app.post('/messages', (req, res) => {
 			console.log("Request to /messages: ", req.body);
+			this.messages!.push(req.body);
 			webviewView.webview.postMessage({
 				type: "messages",
-				content: req.body
+				content: this.messages
 			});
 			res.send({"ok": true})
 		});
@@ -125,8 +157,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			});
 		});
 
-		app.listen(3005, () => {
-			console.log(`Example app listening on port 3005`)
+		app.listen(54322, () => {
+			console.log(`Example app listening on port 54322`)
 		});
 	}
 

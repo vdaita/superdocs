@@ -1,2 +1,0 @@
-class StringInput():
-    pass

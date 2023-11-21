@@ -1,33 +1,30 @@
 from langchain.tools.file_management import (
     ReadFileTool,
-    CopyFileTool,
-    DeleteFileTool,
-    MoveFileTool,
-    WriteFileTool,
-    ListDirectoryTool,
 )
 from langchain.agents.agent_toolkits import FileManagementToolkit
-from langchain.tools import ShellTool
-from website_content_tool import get_website_content
-from langchain.tools import MetaphorSearchResults, StructuredTool
-from langchain.utilities import MetaphorSearchAPIWrapper
+from langchain.tools.file_management import ReadFileTool
+from langchain.tools import StructuredTool, ShellTool
 from langchain.agents import initialize_agent, Tool, tool
-from langchain.agents import AgentType
 from dotenv import load_dotenv
 from trafilatura import fetch_url, extract
 from pydantic import BaseModel, Field
-from langchain.utilities import GoogleSerperAPIWrapper
-from langchain.utilities import SerpAPIWrapper
+from typing import Optional
+from langchain.callbacks.manager import CallbackManagerForToolRun
 from googlesearch import search
+import search_retrieval
 import os
 
-from langchain.agents.agent_toolkits import (
-    create_vectorstore_agent,
-    VectorStoreToolkit,
-    VectorStoreInfo,
-)
-
 load_dotenv(".env")
+
+class MarkdownReadFileTool(ReadFileTool):
+    def _run(
+            self,
+            file_path: str,
+            run_manager: Optional[CallbackManagerForToolRun] = None
+    ) -> str:
+        extension = file_path.split(".")[-1]
+        normal_output = super()._run(file_path=file_path, run_manager=run_manager)
+        return "```" + extension + "\n" + normal_output + "\n" + "```"
 
 @tool("get_website_content", return_direct=True)
 def get_website_content(url: str) -> str:
@@ -38,12 +35,8 @@ def get_website_content(url: str) -> str:
 
 @tool("google_search", return_direct=True)
 def get_google_search(query: str) -> str:
-     """Performs a Google search on your query."""
-     return search(query, num_results=20)
-    
-
-class MarkdownReadFile():
-    
+     """Extract and summarize the results of the top 3 websites related to your search. Useful for looking up documentation. Google searches should be about a singular specific topic only."""
+     return search_retrieval.retrieve_content(query)
 
 class ReplaceTextInFileInput(BaseModel):
     filepath: str = Field(description="Filepath to file you want to modify, relative to the current directory")
@@ -71,23 +64,31 @@ def gen_replacer(directory):
         #     print(f"An error occurred: {e}")
     return replace_text_in_file
 
-def get_tools(directory):
+def get_retrieval_tools(directory):
+    tools = []
+    file_toolkit = FileManagementToolkit(
+        root_dir=directory,
+        selected_tools=["list_directory", "file_search"]
+    )
+    tools.extend(file_toolkit.get_tools())
+
+    tools.append(MarkdownReadFileTool())
+    tools.append(get_website_content)
+    tools.append(get_google_search)
+
+    return tools
+
+
+def get_writing_tools(directory):
     # search = MetaphorSearchAPIWrapper()
-    search = GoogleSerperAPIWrapper()
-    tools = [
-        Tool(
-            name="google_search",
-            func=search.run,
-            description="useful for when you need to ask with search",
-        )
-    ]
+    tools = []
 
     # metaphor_tool = MetaphorSearchResults(api_wrapper=search)
     # tools.append(metaphor_tool)
 
     file_toolkit = FileManagementToolkit(
         root_dir=directory,
-        selected_tools=["read_file", "write_file", "list_directory", "file_search"],
+        selected_tools=["write_file"],
         # callback_manager=cm
     )
     tools.extend(file_toolkit.get_tools())
@@ -99,31 +100,14 @@ def get_tools(directory):
         args_schema=ReplaceTextInFileInput
     )
 
-    tools.append(get_website_content)
+    # tools.append(get_website_content)
+    # tools.append(get_google_search)
     tools.append(ShellTool())
     tools.append(replace_tool)
 
     # print("Returning tools: ", tools)
 
     return tools
-
-def get_tools_non_editing(directory):
-    search = MetaphorSearchAPIWrapper()
-    tools = []
-    metaphor_tool = MetaphorSearchResults(api_wrapper=search)
-    tools.append(metaphor_tool)
-
-    file_toolkit = FileManagementToolkit(
-        root_dir=directory,
-        selected_tools=["read_file", "list_directory", "file_search"],
-        # callback_manager=cm
-    )
-    tools.extend(file_toolkit.get_tools())
-    tools.append(get_website_content)
-    return tools
-
-def generate_tools_for_directory():
-    pass
 
 # https://github.com/microsoft/autogen/blob/main/notebook/agentchat_langchain.ipynb
 def generate_autogen_tool_schema(tool):
