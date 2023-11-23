@@ -10,11 +10,13 @@ import { dark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import axios, { all } from 'axios';
 import ReactJson from 'react-json-view';
 
+
 function App() {
 
   const [message, setMessage] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [responseCallback, setResponseCallback] = useState(() => {});
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
@@ -30,32 +32,45 @@ function App() {
       let type = message.data.type;
       console.log(content, type);
       if(type == "messages"){
-        console.log("Messages: ", content.messages, content.done);
-        setMessages(content.messages);
-        // setAllSnippets(getAllSnippetsForMessages(content.messages));
-        if(content.done){
-          setLoading(false)
+        console.log("Messages: ", content);
+        // for(var i = 0; i < content.length; i++){
+        //   if(!(typeof content[i].content === "string")){
+        //     content[i].content = undefined;
+        //     content[i].content_object = content[i].content
+        //   }
+        // }
+        setMessages(content);
+        if(content.length > 0){
+          setLoading(true);
+        } else {
+          setLoading(false);
         }
       } else if (type == "snippet") {
         // console.log("Current snippets: ", snippets, " new contents: ", content);
         setSnippets((existingArray) => [...existingArray, content]);
         setAllSnippets((existingArray) => [...existingArray, content]);
+      } else if (type == "responseRequest") {
+        requestUserResponse();
       }
     });
   }, []);
 
-  let getAllSnippetsForMessages = (messages: Message[]) => {
-    let extractedSnippets: string[] = [];
-    for(var i = 0; i < messages.length; i++){
-      if(messages[i].role === "human"){
-        let messageSnippets = getSnippets(messages[i].content);
-        console.log("For a message: ", messageSnippets);
-        extractedSnippets = [...extractedSnippets, ...messageSnippets];
-      }
-    }
-    console.log("Got snippet: ", extractedSnippets);
-    return extractedSnippets;
+  let requestUserResponse = () => {
+    setLoading(false);
   }
+
+  // let getAllSnippetsForMessages = (messages: Message[]) => {
+  //   let extractedSnippets: string[] = [];
+  //   for(var i = 0; i < messages.length; i++){
+  //     if(messages[i].from === "human"){
+  //       let messageSnippets = getSnippets(messages[i].content!);
+  //       console.log("For a message: ", messageSnippets);
+  //       extractedSnippets = [...extractedSnippets, ...messageSnippets];
+  //     }
+  //   }
+  //   console.log("Got snippet: ", extractedSnippets);
+  //   return extractedSnippets;
+  // }
 
   let getSnippets = (markdownContent: string) => {
     const codePattern = /```([a-zA-Z]+)\s*([\s\S]+?)```/g;
@@ -71,14 +86,7 @@ function App() {
     return codeSnippets;
   }
 
-  let sendMessage = () => {
-    VSCodeMessage.postMessage({
-      type: "saveCurrent",
-      content: {
-
-      }
-    });
-    
+  let sendMessage = async (message: string) => {
     let fullMessage = message;
     if(snippets.length > 0){
       fullMessage += "\n ### Code snippets: \n"
@@ -86,24 +94,24 @@ function App() {
         fullMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
       }
     }
-    axios({
-      method: "post",
-      url: "http://127.0.0.1:54323/send_message",
-      data: {
-        message: fullMessage
-      },
-      headers: {
-        "Content-Type": "application/json",
-        // "Access-Control-Allow-Origin": "no-cors"
-      }
-    }).then(() => {
 
-    }).catch((e) => {
-      console.error(e);
-      setLoading(false);
-      setMessages([...messages, {role: "assistant", content: "There was an error"}]);
+    if(messages.length === 0){
+      await axios.post('http://127.0.0.1:54323/initiate_chat', {
+        "message": fullMessage
+      }, {
+        headers: {
+          'Content-Type': "application/json;charset=UTF-8"
+        }
+      });
+      setMessage("");
+      setSnippets([]);
+      setLoading(true);
+      return;
+    }
+    VSCodeMessage.postMessage({
+      type: "response",
+      content: fullMessage
     });
-
     setMessage("");
     setSnippets([]);
     setLoading(true);
@@ -183,20 +191,37 @@ function App() {
 
   let viewChanges = () => {
     VSCodeMessage.postMessage({
-      type: "viewChanges",
-      content: {
-
-      }
+      type: "viewChanges"
     })
   }
 
   let revertChanges = () => {
     VSCodeMessage.postMessage({
-      type: "revertChanges",
-      content: {
-
-      }
+      type: "revertChanges"
     })
+  }
+
+  let handleKeyPress = (event: any) => {
+      // console.log(event);
+      if(event.key === 'Enter') {
+          console.log("Sending message on enter");
+          sendMessage(message);
+      }
+  }
+
+  let resetMessages = async () => {
+    VSCodeMessage.postMessage({
+      type: "reset"
+    });
+    await axios.post(
+      "http://localhost:54323/reset_conversation",
+      {},
+      {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    )
   }
 
   return (
@@ -210,16 +235,25 @@ function App() {
         <Tabs.Panel value="chat">
           <Box m="lg">
             {/* {JSON.stringify(messages)} */}
+            {messages.length > 0 && <Button variant="filled" onClick={() => resetMessages()}>Reset conversation</Button>}
 
             {messages.map((item, index) => (
                 <Card shadow="sm" m={4}>
                   <ScrollArea>
-                    <EnhancedMarkdown content={item.content} snippets={allSnippets} role={item.role}/>
+                    {(item.content) && <EnhancedMarkdown content={(typeof item.content !== "string") ? JSON.stringify(item.content) : item.content} snippets={allSnippets} role={item.from + " to " + item.to}/>}
                   </ScrollArea>
                 </Card>
               ))}
 
-            <Textarea disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)}/>
+            
+            {(!loading && messages.length > 0) && <Group>
+              <Button variant="outline" size="xs" onClick={() => sendMessage("Continue")}>✅ Continue</Button>
+              <Button variant="outline" size="xs" onClick={() => sendMessage("Exit")}>❌ Exit</Button>
+            </Group>}
+            <Text m="sm" size="xs">Press Enter to send and Shift-Enter for newline.</Text>
+            <Textarea placeholder="Provide feedback" disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={handleKeyPress}/>
+            <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message)}>➡️ Send</Button>
+
             {snippets.map((item, index) => (
               <Card shadow="sm" key={index}>
                 <ScrollArea>
@@ -230,10 +264,6 @@ function App() {
                 <Button variant="outline" onClick={() => deleteSnippet(index)}>Delete</Button>
               </Card>
             ))}
-
-            <Group my="sm">
-              <Button disabled={loading} variant="default" onClick={() => sendMessage()}>Send to Agent</Button>
-            </Group>
 
             {messages.length >= 2 && <Group my="sm">
               {/* <Button disabled={loading} variant="default" onClick={() => saveCurrent()}>Save Current</Button> */}

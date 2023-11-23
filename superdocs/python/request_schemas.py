@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class SetCurrentProjectRequest(BaseModel):
     directory: str
@@ -11,4 +12,7 @@ class AddDocumentationSourceRequest(BaseModel):
     method: str
 
 class DeleteDocumentationSourceRequest(BaseModel):
-    base_url: str
+    id: str
+
+class StartChatRequest(BaseModel):
+    message: str
