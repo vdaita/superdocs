@@ -15,7 +15,7 @@ from langchain.schema import StrOutputParser
 
 
 model = ChatOpenAI()
-text_splitter = TokenTextSplitter(10000, encoding_name="gpt-3.5-turbo-16k", chunk_overlap=500)
+text_splitter = TokenTextSplitter(chunk_size=10000, chunk_overlap=500)
 
 # retrieval_function = {
 #     "name": "retrieve_documentation_and_search",
@@ -44,11 +44,19 @@ def join_texts(texts: List[str]) -> str:
 def retrieve_content(question: str):
     # identify 
     results = search(question, num_results=3, advanced=True, timeout=5)
+
+    # Is summarization required?
+
     source_summaries = []
-    model.max_tokens = 600
+    model.max_tokens = 700
     for result in results:
         downloaded = fetch_url(result.url)
         content = extract(downloaded)
+        
+        if model.get_num_tokens(content) < 700:
+            source_summaries.append(content)
+            continue
+
         texts = text_splitter.split_text(content)
         for text in texts:
             # run summarization chain
@@ -57,7 +65,7 @@ def retrieve_content(question: str):
                 "context": text
             })
             source_summaries.append(summary)
-            pass
+
 
     # combine summaries in source_summaries recursively
         # create chunks of k token size, combine those, continue until it is small enough.
