@@ -25,6 +25,10 @@
       {
         "command": "superdocs.addSnippet",
         "title": "Superdocs: Add Snippet"
+      },
+      {
+        "command": "superdocs.addTerminal",
+        "title": "Superdocs: Add Terminal Content"
       }
     ],
     "menus": {
@@ -32,8 +36,26 @@
         {
           "command": "superdocs.addSnippet",
           "when": "editorHasSelection"
+        },
+        {
+          "command": "superdocs.addTerminal"
         }
       ]
+    },
+    "configuration": {
+      "title": "Superdocs",
+      "properties": {
+        "superdocs.openAiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "The OpenAI Key you plan to use. You should restrict how much this key can spend as much as you can."
+        },
+        "superdocs.pythonServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to your Python server"
+        }
+      }
     }
   },
   "scripts": {

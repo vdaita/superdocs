@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { WebviewOptions } from 'vscode';
 
 import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
+import { ChildProcessWithoutNullStreams } from 'child_process';
 
 const app = express();
 app.use(express.json());
@@ -46,6 +47,9 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	private timeLastResponseProcessed?: number;
 	private mostRecentResponse?: any;
 	private messages?: any[];
+	private snippets?: any[];
+	private serverSpawn?: ChildProcessWithoutNullStreams;
+	private serverData?: string;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
@@ -55,6 +59,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		this.messages = [];
 		this.timeLastResponseProcessed = 0;
 		this.mostRecentResponse = "";
+		this.snippets = [];
+		this.serverData = "";
 	 }
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
@@ -70,7 +76,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			
 		}
 		
-
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
 
 		webviewView.webview.onDidReceiveMessage(data => {
@@ -92,6 +97,32 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					type: "messages",
 					content: this.messages
 				});
+			} else if (data.type === "deleteSnippet") {
+				this.snippets?.splice(data.content.index, 1);
+				webviewView.webview.postMessage({
+					type: "snippets",
+					content: this.snippets
+				})
+			} else if (data.type === "setSnippetsToPast"){
+				for(var i = 0; i < this.snippets!.length; i++){
+					this.snippets![i].isCurrent = false;
+				}
+				webviewView.webview.postMessage({
+					type: "snippets",
+					content: this.snippets
+				})
+			} else if (data.type === "startServer") {
+				console.log("Running _startServer")
+				this._startServer(webviewView.webview);
+			} else if (data.type === "stopServer") {
+				console.log("Running _stopServer")
+				this._stopServer();
+			} else if (data.type === "clearServerOutput") {
+				this.serverData = "";
+				webviewView.webview.postMessage({
+					type: "serverData",
+					content: this.serverData
+				})
 			}
 		});
 
@@ -100,20 +131,39 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			const selection = vscode.window.activeTextEditor?.selection;
 			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
 			const language = vscode.window.activeTextEditor?.document.languageId;
-			const filepath = vscode.window.activeTextEditor?.document.uri.fsPath;
+			const filepath = vscode.window.activeTextEditor?.document.uri.path;
+			const relativeFilepath = path.relative(vscode.workspace.workspaceFolders![0].uri.path, filepath!);
+
+			this.snippets?.push({
+				code: selectedText,
+				language: language,
+				filepath: relativeFilepath,
+				isCurrent: true
+			});
 			
 			webviewView.webview.postMessage({
-				type: "snippet",
-				content: {
-					code: selectedText,
-					language: language,
-					startIndex: undefined,
-					endIndex: undefined,
-					filepath: filepath
-				}
+				type: "snippets",
+				content: this.snippets
 			});
 		});
 
+		let addTerminal = vscode.commands.registerCommand("superdocs.addTerminal", () => {
+			console.log("Adding terminal content");
+			let content = this.terminalTool?.getTerminalContent();
+
+			this.snippets?.push({
+				code: content,
+				language: "terminal",
+				filepath: "User terminal output"
+			})
+
+			webviewView.webview.postMessage({
+				type: "snippet",
+				content: this.snippets
+			})
+		});
+
+		this._context.subscriptions.push(addTerminal);
 		this._context.subscriptions.push(addSnippet);
 
 		app.get("/get_user_response", async (req, res) => {
@@ -141,25 +191,66 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			res.send({"ok": true})
 		});
 
-		app.post("/run_terminal", async (req, res) => {
-			console.log("Request to /run_terminal: ", req.body.content)
-			let terminalResponse = await this.terminalTool?.runTerminalCommand(req.body.content);
-			res.json({
-				content: terminalResponse
-			});
-		});
-
-		app.get("/get_terminal", async (req, res) => {
-			console.log("Request to /get_terminal: ", req.body.content)
-			let terminalResponse = await this.terminalTool?.getTerminalContent();
-			res.json({
-				content: terminalResponse
-			});
-		});
-
 		app.listen(54322, () => {
 			console.log(`Example app listening on port 54322`)
 		});
+	}
+
+	private _startServer(webview: vscode.Webview){
+
+		if(!vscode.workspace.workspaceFolders){
+			vscode.window.showInformationMessage("Superdocs: you must have a project open to start the server");
+		}
+
+		// 2 conditions: does it end in .py or not?
+		let serverPath: string | undefined = vscode.workspace.getConfiguration("superdocs").get("pythonServerPath");
+		let openAiApiKey: string | undefined = vscode.workspace.getConfiguration("superdocs").get("openAiApiKey");
+		let directory: string = vscode.workspace.workspaceFolders![0].uri.path;
+
+		
+		if(!serverPath || !openAiApiKey){
+			vscode.window.showErrorMessage("Superdocs: you need to set both the server path and the OpenAI api key for this to work");
+			return;
+		} else {
+			vscode.window.showInformationMessage("Superdocs: starting server");
+			if(serverPath.split(".").at(-1) == "py") {
+				this.serverSpawn = spawn("conda run -n superdocs python -u", [serverPath, directory, openAiApiKey], {
+					shell: true
+				});
+			} else {
+				this.serverSpawn = spawn(serverPath);
+			}
+			this.serverSpawn.stdout.on("data", (data) => {
+				console.log("server data: ", data);
+				this.serverData += data;
+				webview.postMessage({
+					type: "serverData",
+					content: this.serverData
+				});
+			});
+			this.serverSpawn.stderr.on("data", (data) => {
+				console.log("server data: ", data);
+				this.serverData += data;
+				webview.postMessage({
+					type: "serverData",
+					content: this.serverData
+				});
+			});
+			this.serverSpawn.on('exit',  (exitCode) => {
+				console.log("Exited with code: " + exitCode);
+				this.serverData += "\n Exited with code: " + exitCode;
+				webview.postMessage({
+					type: "serverData",
+					content: this.serverData
+				});
+			});
+			  
+		}
+	}
+
+	private _stopServer(){
+		vscode.window.showInformationMessage("Stopping server");
+		this.serverSpawn?.kill();
 	}
 
 	private _getHtmlForWebview(context: vscode.ExtensionContext){

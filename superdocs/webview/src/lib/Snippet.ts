@@ -3,5 +3,6 @@ export interface Snippet {
     startIndex?: number, 
     endIndex?: number,
     filepath: string,
-    language: string
+    language: string,
+    isCurrent: boolean
 }

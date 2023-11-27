@@ -4,7 +4,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.vectorstores import Chroma
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
+from langchain.embeddings import OpenAIEmbeddings, SentenceTransformerEmbeddings
 from threading import Thread
 import typer
 import uvicorn
@@ -30,9 +30,9 @@ autogen_thread = None
 langchain_chroma_code = None
 langchain_chroma_docs = None
 directory = ""
+api_key = None
 
-# embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-embeddings = OpenAIEmbeddings()
+embeddings = SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -124,14 +124,18 @@ def reset_conversation():
 @app.post("/initiate_chat")
 def initiate_chat(payload: Dict[Any, Any]):
     print("Initiate_chat receieved: ", payload)
-    def generate_thread():
-        agents["user_proxy"].initiate_chat(
-            agents["assistant"],
-            message=payload["message"]
-        )
+    agents["user_proxy"].initiate_chat(
+        agents["gc_manager"],
+        message=payload["message"]
+    )
+    # def generate_thread():
+    #     agents["user_proxy"].initiate_chat(
+    #         agents["gc"],
+    #         message=payload["message"]
+    #     )
     
-    autogen_thread = Process(target=generate_thread)
-    autogen_thread.start()
+    # autogen_thread = Process(target=generate_thread)
+    # autogen_thread.start()
     return {"ok": True}
 
 @app.get("/test")
@@ -141,131 +145,124 @@ def get_test():
 def setup_autogen():
     global agents
 
-    # planner_config_list = [
+    print("API key: ", api_key)
 
-    # ]
-    # summarizer_config_list = [
-
-    # ]
-    # coder_config_list = [
-    #     {
-    #         'model': 'phind/phind-codellama-34b',
-    #         'api_key': os.environ['OPENROUTER_API_KEY'],
-    #         "api_type": "open_ai",
-    #         'api_base': "https://openrouter.ai/api/v1/"
-    #     }
-    # ]
     config_list = [
         {
             "model": "gpt-4-1106-preview",
-            "api_key": os.environ["OPENAI_API_KEY"]
+            "api_key": api_key
         }
     ]
 
-    non_interactive_config = {
+    llm_config = {
         "timeout": 240,
+        "request_timeout": 240,
         "functions": [],
         "config_list": config_list,
     }
-
-    action_llm_config = {
-        "timeout": 240,
-        "functions": [],
-        "config_list": config_list,
-    }
-
-    retrieval_tools = tools.get_retrieval_tools(directory)
-    writing_tools = tools.get_writing_tools(directory)
-
-    all_tools = retrieval_tools + writing_tools
-
-    for tool in all_tools:
-        action_llm_config["functions"].append(tools.generate_autogen_tool_schema(tool))
-
-    planner_agent = SendingAssistantAgent(
-        name="planner",
-        system_message="""You are a helpful AI assistant that lives inside a code editor as a programming copilot. You suggest coding, reasoning, and information retrieval steps for another AI assistant to accomplish the task the user is trying to solve. Do not suggest concrete code. 
-        For any action beyond writing code or reasoning, convert it to a step that can be implemented by one of the following steps: file search, semantic code search, Google Search context addition, file reading, file writing, shell execution, text replacement in file. 
-        Finally, inspect each result line by line. If the plan is not good, suggest a better plan. If the generated code is wrong, analyze the mistake and suggest a fix.""",
-        llm_config=non_interactive_config
-    )
-
-    planner_user = SendingUserProxyAgent(
-        name="planner_user",
-        max_consecutive_auto_reply=0,
-        human_input_mode="NEVER"
-    )
-
-    def ask_planner(message):
-        planner_user.initiate_chat(planner_agent, message=message)
-        return planner_user.last_message()["content"]
     
-    action_llm_config["functions"].append({
-        "name": "ask_planner",
-        "description": "ask planner to: 1. get a plan for finishing a task, 2. verify results and assess next steps",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "question to ask planner. Make sure the question includes enough context to make an informed decision."
-                }
-            }
-        }
-    })
+    function_map = {
 
-    assistant_system_message =  """
-You are a helpful AI assistant.
-Solve tasks using your coding and language skills.
-In the following cases, suggest shell script (in a sh coding block) for the user to execute.
-    1. When you need to collect info, use the code to output the info you need, for example, download/read a file, find a file, find text within files, print the content of a webpage or a file, get the current date/time, check the operating system. After sufficient info is printed and the task is ready to be solved based on your language skill, you can solve the task by yourself.
-    2. When you need to perform some task with code, particularly modifying or creating files, use the code to perform the task and output the result. Finish the task smartly.
-Solve the task step by step if you need to. If a plan is not provided, explain your plan first. Be clear which step uses code, and which step uses your language skill.
-When using code, you must indicate the script type in the code block. The user cannot provide any other feedback or perform any other action beyond executing the code you suggest. The user can't modify your code. So do not suggest incomplete code which requires users to modify. Don't use a code block if it's not intended to be executed by the user.
-If you want the user to save the code in a file before executing it, use a shell script that saves the contents to the file. Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user.
-If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try.
-When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible.
-Reply "TERMINATE" in the end when everything is done.
+    }
+
+    PLANNING_SYSTEM_MESSAGE = """
+    You are a product manager. Revise the plan based on feedback from admin and critic, until admin approval.
+    Do not suggest code directly. That will be handled by the coder agent.
+    Find ways to solve the task step by step if you need to. Explain your plan. Be clear which step uses code, and which step uses other processing.
+    When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible.
+    
+    Reply "TERMINATE" in the end when everything is done.
     """
 
-    assistant = SendingAssistantAgent(
-        name="assistant",
-        system_message=assistant_system_message,
-        llm_config=action_llm_config
+    CODER_SYSTEM_MESSAGE = """
+    You are a senior software developer.
+    Solve subtasks provided by the product manager using your coding and language skills.
+    If you are using a library that might have been updated recently, search for the most recent documentation.
+    In the following cases, suggest shell script (in a sh coding block) for the user to execute.
+        1. When you need to collect info, use the code to output the info you need, for example, browse or search the web, download/read a file, print the content of a webpage or a file, get the current date/time, check the operating system. After sufficient info is printed and the task is ready to be solved based on your language skill, you can solve the task by yourself.
+        2. When you need to write to the filesystem, download relevant packages, or otherwise make modifications to help implement the task in the user's filesystem.
+
+    Solve the task step by step if you need to. Be clear which step uses code, and which step uses your language skill.
+    When using code, you must indicate the script type in the code block. The user cannot provide any other feedback or perform any other action beyond executing the code you suggest. The user can't modify your code. So do not suggest incomplete code which requires users to modify. Don't use a code block if it's not intended to be executed by the user.
+    Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user.
+    
+    If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try.
+
+    When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible.
+    Reply "TERMINATE" in the end when everything is done.
+    """
+
+    REVIEWER_SYSTEM_MESSAGE = """
+    You are a code reviewer. Double check plans and code from other agents that write to the filesystem and provide feedback.
+    Reply "TERMINATE" in the end when everything is done.
+    """
+
+
+    agent_tools = tools.get_retrieval_tools(directory=directory, vectorstore=langchain_chroma_code)
+    for tool in agent_tools:
+        llm_config["functions"].append(tools.generate_autogen_tool_schema(tool))
+        name = tool.name.lower().replace(" ", "_")
+        function_map[name] = tool._run
+
+    print(llm_config)
+
+    planner_agent = SendingAssistantAgent(
+        name="Planner",
+        system_message=PLANNING_SYSTEM_MESSAGE,
+        llm_config=llm_config,
+        function_map=function_map
     )
 
-    user_proxy_function_map = {}
-    for tool in all_tools:
-        name = tool.name.lower().replace (' ', '_')
-        user_proxy_function_map[name] = tool._run
-    user_proxy_function_map["ask_planner"] = ask_planner
+    coder_agent = SendingAssistantAgent(
+        name="Coder",
+        system_message=CODER_SYSTEM_MESSAGE,
+        llm_config=llm_config,
+        function_map=function_map
+    )
+
+    reviewer_agent = SendingAssistantAgent(
+        name="Reviewer",
+        system_message=REVIEWER_SYSTEM_MESSAGE,
+        llm_config=llm_config,
+        function_map=function_map
+    )
 
     user_proxy = SendingUserProxyAgent(
         name="user_proxy",
-        system_message="A human administrator.",
+        system_message="A human administrator",
         human_input_mode="ALWAYS",
-        function_map=user_proxy_function_map,
         code_execution_config={
             "work_dir": directory,
             "use_docker": False
         }
     )
 
-    agents["user_proxy"] = user_proxy
-    agents["assistant"] = assistant
-    agents["planner_agent"] = planner_agent
-    agents["planner_user"] = planner_user
-
+    agents = {
+        "planner_agent": planner_agent,
+        "coder_agent": coder_agent,
+        "reviewer_agent": reviewer_agent,
+        "user_proxy": user_proxy
+    }
     for agent in agents:
         agents[agent].set_frontend_url()
-        agents[agent].timeout = 240
+
+    groupchat = GroupChat(
+        agents=[agents[name] for name in agents.keys()],
+        messages=[],
+        max_round=12,
+    )
+    manager = GroupChatManager(groupchat=groupchat, llm_config=llm_config)
+
+    agents["gc_manager"] = manager
+    agents["gc"] = groupchat
 
     # user_proxy.initiate_chat(manager, message="Ask the user what they want to do and solve their problem to the best of your ability.")
 
-def start_server(folder_name: str, server_port: int=54323, frontend_port: int=54322):
-    global autogen_thread, langchain_chroma_code, langchain_chroma_docs, directory
+def start_server(folder_name: str, openai_api_key: str, server_port: int=54323):
+    global autogen_thread, langchain_chroma_code, langchain_chroma_docs, directory, api_key
 
     directory = folder_name
+    api_key = openai_api_key
 
     user_home = os.path.expanduser("~")
     superdocs_directory = os.path.join(user_home, ".superdocs")
