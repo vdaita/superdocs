@@ -25,6 +25,10 @@
       {
         "command": "superdocs.addSnippet",
         "title": "Superdocs: Add Snippet"
+      },
+      {
+        "command": "superdocs.sendDirectory",
+        "title": "Superdocs: Send Directory to Frontend"
       }
     ],
     "menus": {

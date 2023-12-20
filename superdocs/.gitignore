@@ -5,6 +5,8 @@
 .env.local
 .DS_Store
 python/__pycache__
+**/*.env
+
 
 npm-debug.log*
 yarn-debug.log*

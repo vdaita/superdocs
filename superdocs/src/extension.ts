@@ -2,21 +2,10 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as express from 'express';
 import TerminalTool from './tools/terminal';
-import replaceTextInFile from './tools/finteract';
-import axios from 'axios';
-import { spawn } from 'node:child_process';
-import { WebviewOptions } from 'vscode';
+import {replaceTextInFile, writeToFile} from './tools/finteract';
 
 import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
-
-const app = express();
-app.use(express.json());
-
-app.get('/', (req, res) => {
-	res.send('Hello World!');
-});
   
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -70,13 +59,25 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			
 		}
 		
-
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
+
+		webviewView.webview.postMessage({
+			type: "info",
+			content: {
+				directory: vscode.workspace.workspaceFolders![0].uri.path
+			}
+		})
+
+		// Mkae sure there is an option to send the directory over manually.
 
 		webviewView.webview.onDidReceiveMessage(data => {
 			console.log("Received message from frontend: ", data);
 			if(data.type == "replaceSnippet"){
 				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
+			} else if (data.type == "writeFile") {
+				writeToFile(data.content.text, data.content.filepath);
+			} else if (data.type == "sendTerminal") {
+
 			} else if (data.type === "saveCurrent") {
 				saveChanges();
 			} else if (data.type === "viewChanges") {
@@ -114,52 +115,17 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			});
 		});
 
+		let sendDirectory = vscode.commands.registerCommand("superdocs.sendDirectory", () => {
+			webviewView.webview.postMessage({
+				type: "info",
+				content: {
+					directory: vscode.workspace.workspaceFolders![0].uri.path
+				}
+			})
+		})
+
 		this._context.subscriptions.push(addSnippet);
-
-		app.get("/get_user_response", async (req, res) => {
-			console.log("Request to /get_user_response: ", req.body);
-			webviewView.webview.postMessage({
-				type: "responseRequest"
-			});
-			let requestTime = Date.now();
-			while(this.timeLastResponseProcessed! < requestTime){
-				console.log("Checking response: ", this.timeLastResponseProcessed, requestTime);
-				await new Promise(resolve => setTimeout(resolve, 100));
-			}
-			res.send({
-				message: this.mostRecentResponse
-			});
-		});
-
-		app.post('/messages', (req, res) => {
-			console.log("Request to /messages: ", req.body);
-			this.messages!.push(req.body);
-			webviewView.webview.postMessage({
-				type: "messages",
-				content: this.messages
-			});
-			res.send({"ok": true})
-		});
-
-		app.post("/run_terminal", async (req, res) => {
-			console.log("Request to /run_terminal: ", req.body.content)
-			let terminalResponse = await this.terminalTool?.runTerminalCommand(req.body.content);
-			res.json({
-				content: terminalResponse
-			});
-		});
-
-		app.get("/get_terminal", async (req, res) => {
-			console.log("Request to /get_terminal: ", req.body.content)
-			let terminalResponse = await this.terminalTool?.getTerminalContent();
-			res.json({
-				content: terminalResponse
-			});
-		});
-
-		app.listen(54322, () => {
-			console.log(`Example app listening on port 54322`)
-		});
+		this._context.subscriptions.push(sendDirectory);
 	}
 
 	private _getHtmlForWebview(context: vscode.ExtensionContext){

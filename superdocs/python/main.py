@@ -1,306 +1,439 @@
-from fastapi import FastAPI, Request, status
-from fastapi.encoders import jsonable_encoder
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from flask import request
+from langchain.chat_models import ChatOpenAI
 from langchain.vectorstores import Chroma
-from langchain.embeddings import OpenAIEmbeddings, HuggingFaceEmbeddings
-from threading import Thread
-import typer
-import uvicorn
-from agent import SendingAssistantAgent, SendingUserProxyAgent
-from autogen import config_list_from_json, GroupChat, GroupChatManager
-import re
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from repo import list_non_ignored_files, find_closest_file, get_documents
+from langchain.tools import format_tool_to_openai_function
+from search_and_replace import find_best_match
+from ripgrepy import Ripgrepy
+from openai import OpenAI
+import json
+from dotenv import load_dotenv
+from flask import Flask
+from flask_cors import CORS, cross_origin
 import os
-from contextlib import asynccontextmanager
-import request_schemas
-import documentation_loader
-import embedded_repo
-import chromadb
-import uuid
-import tools
-from typing import Dict, Any
-from multiprocessing import Process
+import logging
 
-import dotenv
-dotenv.load_dotenv(".env")
+load_dotenv()
 
-agents = {}
-autogen_thread = None
-langchain_chroma_code = None
-langchain_chroma_docs = None
-directory = ""
+openai_client = OpenAI(
+    api_key=os.environ["OPENAI_API_KEY"]
+) # Langchain seems to have a mid functions implementation 
 
-# embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-embeddings = OpenAIEmbeddings()
+app = Flask(__name__)
+cors = CORS(app, resources={r"/*": {"origins": "*"}})
+logging.getLogger('flask_cors').level = logging.DEBUG
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    a = 2
-    yield
-    if autogen_thread:
-        autogen_thread.stop()
 
-app = FastAPI(lifespan=lifespan)
-origins = ["*"]
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+embeddings = HuggingFaceEmbeddings(model_name="TaylorAI/bge-micro-v2")
+perplexity_model = ChatOpenAI(
+    model_name="pplx-api/",
+    openai_api_key=os.environ["PERPLEXITY_API_KEY"],
+    openai_api_base="https://api.perplexity.ai",
+    headers={"HTTP-Referer": "http://localhost:3000"},
+    max_tokens=800
 )
 
-@app.post("/add_source")
-def add_source(request: request_schemas.AddDocumentationSourceRequest):
-    docs = documentation_loader.load_website_google(request.base_url)
-    metadata = []
-    ids = []
-    texts = []
-    for doc in docs:
-        doc.metadata["id"] = str(uuid.uuid4())
-        metadata.append(doc.metadata)
-        texts.append(doc.page_content)
-        ids.append(doc.metadata["id"])
+db = {
+    "vectorstore": None,
+    "directory": None
+}
 
-    langchain_chroma_docs.add_texts(texts, metadata, ids)
-    return {"ok": True}
-
-@app.post("/delete_source")
-def delete_source(request: request_schemas.DeleteDocumentationSourceRequest):
-    langchain_chroma_docs.delete(ids=[request.id])
-    return {"ok": True}
-
-@app.get("/get_sources")
-def get_sources():
-    global langchain_chroma_docs
-    global langchain_chroma_code
-
-    code_sources = langchain_chroma_code.get()
-    # print(code_sources)
-    code_objects = []
-    for i in range(len(code_sources["ids"])):
-        code_objects.append({
-            "id": code_sources["ids"][i],
-            "document": code_sources["documents"][i],
-            "metadata": code_sources["metadatas"][i]
-        })
-
-    return code_objects
-
-@app.post("/reload_local_sources")
-def reload_local_sources():
-    # identify which files have already loaded
-    all_documents = langchain_chroma_code.get()
-    # print(all_documents)
-    langchain_chroma_code.delete(ids=all_documents["ids"])
-
-    docs = embedded_repo.get_documents(directory)
-    metadata = []
-    ids = []
-    texts = []
-    for doc in docs:
-        doc.metadata["id"] = str(uuid.uuid4())
-        metadata.append(doc.metadata)
-        texts.append(doc.page_content)
-        ids.append(doc.metadata["id"])
-
-    langchain_chroma_code.add_texts(texts, metadata, ids)
-    # langchain_chroma_code.persist()
-
-    return {"ok": True}
-
-@app.post("/reset_conversation")
-def reset_conversation():
-    global agents
-    global autogen_thread
-    for agent in agents.keys():
-        agents[agent].reset()
-
-    autogen_thread.terminate()
-
-    return {"ok": True}
-
-@app.post("/initiate_chat")
-def initiate_chat(payload: Dict[Any, Any]):
-    print("Initiate_chat receieved: ", payload)
-    def generate_thread():
-        agents["user_proxy"].initiate_chat(
-            agents["assistant"],
-            message=payload["message"]
-        )
-    
-    autogen_thread = Process(target=generate_thread)
-    autogen_thread.start()
-    return {"ok": True}
-
-@app.get("/test")
-def get_test():
-    return {"message": "Server says hello!"}
-
-def setup_autogen():
-    global agents
-
-    # planner_config_list = [
-
-    # ]
-    # summarizer_config_list = [
-
-    # ]
-    # coder_config_list = [
-    #     {
-    #         'model': 'phind/phind-codellama-34b',
-    #         'api_key': os.environ['OPENROUTER_API_KEY'],
-    #         "api_type": "open_ai",
-    #         'api_base': "https://openrouter.ai/api/v1/"
-    #     }
-    # ]
-    config_list = [
-        {
-            "model": "gpt-4-1106-preview",
-            "api_key": os.environ["OPENAI_API_KEY"]
-        }
-    ]
-
-    non_interactive_config = {
-        "timeout": 240,
-        "functions": [],
-        "config_list": config_list,
+def get_retrieval_tools(directory):
+    def external_search(args):
+        query = args["query"]
+        return f"Query: {query} \n \n Response: Test Perplexity Response"
+        # return f"Query: {query} \n \n Response: {perplexity_model([HumanMessage(query)]).content}"
+    def read_file(args):
+        filepath = args["filepath"]
+        closest_filepath = find_closest_file(directory, filepath)
+        if not(closest_filepath):
+            return "Filepath does not exist"
+        file = open(os.path.join(directory, closest_filepath), "r")
+        contents = file.read()
+        file.close()
+        return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+    def semantic_search(args):
+        global db
+        query = args["query"]
+        docs = db["vectorstore"].similarity_search(query)
+        snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: {doc.page_content} \n ------" for doc in docs])
+        return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
+    def lexical_search(args):
+        """Accepts regular expression search query and searches for all instances of it."""
+        query = args["query"]
+        rg = Ripgrepy(query, directory)
+        searched_content = rg.H().n().run().as_string
+        if len(searched_content) > 1200:
+            return "Too many instances"
+        return f"File lexical search: {query} \n \n Retrieved content: {searched_content}"
+    return {
+        "external_search": external_search,
+        "read_file": read_file,
+        "semantic_search": semantic_search,
+        "lexical_search": lexical_search
     }
 
-    action_llm_config = {
-        "timeout": 240,
-        "functions": [],
-        "config_list": config_list,
-    }
-
-    retrieval_tools = tools.get_retrieval_tools(directory)
-    writing_tools = tools.get_writing_tools(directory)
-
-    all_tools = retrieval_tools + writing_tools
-
-    for tool in all_tools:
-        action_llm_config["functions"].append(tools.generate_autogen_tool_schema(tool))
-
-    planner_agent = SendingAssistantAgent(
-        name="planner",
-        system_message="""You are a helpful AI assistant that lives inside a code editor as a programming copilot. You suggest coding, reasoning, and information retrieval steps for another AI assistant to accomplish the task the user is trying to solve. Do not suggest concrete code. 
-        For any action beyond writing code or reasoning, convert it to a step that can be implemented by one of the following steps: file search, semantic code search, Google Search context addition, file reading, file writing, shell execution, text replacement in file. 
-        Finally, inspect each result line by line. If the plan is not good, suggest a better plan. If the generated code is wrong, analyze the mistake and suggest a fix.""",
-        llm_config=non_interactive_config
-    )
-
-    planner_user = SendingUserProxyAgent(
-        name="planner_user",
-        max_consecutive_auto_reply=0,
-        human_input_mode="NEVER"
-    )
-
-    def ask_planner(message):
-        planner_user.initiate_chat(planner_agent, message=message)
-        return planner_user.last_message()["content"]
-    
-    action_llm_config["functions"].append({
-        "name": "ask_planner",
-        "description": "ask planner to: 1. get a plan for finishing a task, 2. verify results and assess next steps",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "question to ask planner. Make sure the question includes enough context to make an informed decision."
+retrieval_tools_openai = [
+    {
+        "type": "function",
+        "function": {
+            "name": "external_search",
+            "description": "Question-formatted query. Query external search for specific subinformation (break the question down into pieces of info to retrieve). Useful for understanding errors or getting up to date information about libraries.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Specific information to be queried"
+                    }
                 }
             }
         }
-    })
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file on the filesystem",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Specific filepath to retrieve"
+                    }
+                }
+            }
+        }
+    },
+    # {
+    #     "type": "function",
+    #     "function": {
+    #         "name": "semantic_search",
+    #         "description": "Semantically search for information on the file system. Useful for when you don't know the exact name of a tool.",
+    #         "parameters": {
+    #             "type": "object",
+    #             "properties": {
+    #                 "query": {
+    #                     "type": "string",
+    #                     "description": "Query for semantic search"
+    #                 }
+    #             }
+    #         }
+    #     }
+    # },
+    {
+        "type": "function",
+        "function": {
+            "name": "lexical_search",
+            "description": "Lexically search for information on the filesystem. Useful for when you do know the name of a tool.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Regular expression search term"
+                    }
+                }
+            }
+        }
+    }
+]
 
-    assistant_system_message =  """
-You are a helpful AI assistant.
-Solve tasks using your coding and language skills.
-In the following cases, suggest shell script (in a sh coding block) for the user to execute.
-    1. When you need to collect info, use the code to output the info you need, for example, download/read a file, find a file, find text within files, print the content of a webpage or a file, get the current date/time, check the operating system. After sufficient info is printed and the task is ready to be solved based on your language skill, you can solve the task by yourself.
-    2. When you need to perform some task with code, particularly modifying or creating files, use the code to perform the task and output the result. Finish the task smartly.
-Solve the task step by step if you need to. If a plan is not provided, explain your plan first. Be clear which step uses code, and which step uses your language skill.
-When using code, you must indicate the script type in the code block. The user cannot provide any other feedback or perform any other action beyond executing the code you suggest. The user can't modify your code. So do not suggest incomplete code which requires users to modify. Don't use a code block if it's not intended to be executed by the user.
-If you want the user to save the code in a file before executing it, use a shell script that saves the contents to the file. Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user.
-If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try.
-When you find an answer, verify the answer carefully. Include verifiable evidence in your response if possible.
-Reply "TERMINATE" in the end when everything is done.
+def get_executor_tools(directory):
+    def replace_in_file(args):
+        filepath = args["filepath"]
+        first_few_lines = args["first_few_lines_to_replace"]
+        last_few_lines = args["last_few_lines_to_replace"]
+        original_text = args["original_text"]
+        new_text = args["new_text"]
+
+        closest_filepath = find_closest_file(directory, filepath)
+        if not(closest_filepath):
+            return '{"error": True}'
+
+        file = open(os.path.join(directory, closest_filepath), "r+")
+
+        contents = file.read()
+        lines = file.split("\n")
+        best_match = find_best_match(original_text, contents)
+        
+        code_original_text = "\n".join(lines[best_match.start:best_match.end + 1])
+
+        return json.dumps({
+            "filepath": closest_filepath,
+            "first_few_lines": first_few_lines,
+            "last_few_lines": last_few_lines,
+            "original_text": code_original_text,
+            "new_text": new_text
+        })
+    def write_file(args):
+
+        filepath = args["filepath"]
+        new_text = args["text"]
+
+        return json.dumps({
+            "filepath": filepath,
+            "text": new_text
+        })
+        # file = open(os.path.join(directory, filepath), "w+")
+        # file.write(new_text)
+        # file.close()
+        # return "Successfully wrote to file" # TODO: replace with JSON formatting
+    def add_feedback(args):
+        return args["content"]
+    return  {"replace_in_file": replace_in_file, "write_file": write_file, "add_feedback": add_feedback}
+
+executor_tools_openai = [
+    {
+        "type": "function",
+        "function": {
+            "name": "replace_in_file",
+            "description": "Replace content in the desired filepath. Use this to replace snippets.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Filepath to the file you are doing the replacement on."
+                    },
+                    "first_few_lines_to_replace": {
+                        "type": "string",
+                        "description": "The first few lines of the text you want to replace."
+                    },
+                    "last_few_lines_to_replace": {
+                        "type": "string",
+                        "description": "Last few lines of the text you want to replace."
+                    },
+                    "original_text": {
+                        "type": "string",
+                        "description": "Text within the original file that should be removed and replaced."
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "Text that should be inserted and used as replacement for original_text."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create and write file to the desired filepath.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Filepath to the file you are writing to."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Content to write."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_feedback",
+            "description": "Provide additional instructions and information to the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "Text"
+                    }
+                }
+            }
+        }
+    }
+]
+
+@app.post("/information")
+def extract_information():
+    data = request.get_json()
+    directory = data["directory"]
+    messages = data["messages"]
+    global db
+
+    # if db["directory"] != directory:
+    #     documents = get_documents(directory)
+    #     db["vectorstore"] = Chroma.from_documents(documents, embeddings)
+    #     pass
+
+    # Add all relevant information relating to adding context
+    existing_context = ""
+
+    for message in messages:
+        if message["role"] == "user":
+            if message["content"].startswith("CONTEXT"):
+                existing_context += message["content"]
+        elif message["role"] == "tool":
+            existing_context += message["content"]
+    
+    INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
+    Your job is to serve as an context extraction system for a coding assistant.
+    You have the ability to use functions to extract context, namely: external search, codebase semantic search, codebase lexical search, file reading, and user asking.
+    You will be given the following information: Filesystem information, existing context and objective.
+    Use the absolute minimum queries required to find the information required to solve the objective. 
+    
+    Output DONE if there is no further information that needs to be provided as context.
     """
 
-    assistant = SendingAssistantAgent(
-        name="assistant",
-        system_message=assistant_system_message,
-        llm_config=action_llm_config
-    )
+    CONTEXT_MESSAGE = f"""
+    Filesystem information:
+    {list_non_ignored_files(directory)}
+    \n \n
+    Existing context:
+    {existing_context}
+    \n \n
+    Objective: {messages[-1]["content"]}
+    """
 
-    user_proxy_function_map = {}
-    for tool in all_tools:
-        name = tool.name.lower().replace (' ', '_')
-        user_proxy_function_map[name] = tool._run
-    user_proxy_function_map["ask_planner"] = ask_planner
-
-    user_proxy = SendingUserProxyAgent(
-        name="user_proxy",
-        system_message="A human administrator.",
-        human_input_mode="ALWAYS",
-        function_map=user_proxy_function_map,
-        code_execution_config={
-            "work_dir": directory,
-            "use_docker": False
+    messages = [
+        {
+            "role": "system",
+            "content": INFORMATION_EXTRACTION_SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": CONTEXT_MESSAGE
         }
+    ]
+
+    tool_functions = get_retrieval_tools(directory)
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4-1106-preview",
+        messages=messages,
+        tools=retrieval_tools_openai,
+        tool_choice="auto",
+        max_tokens=512
     )
+    response_message = response.choices[0].message
+    tool_calls = response_message.tool_calls
 
-    agents["user_proxy"] = user_proxy
-    agents["assistant"] = assistant
-    agents["planner_agent"] = planner_agent
-    agents["planner_user"] = planner_user
+    return_messages = [
+        json.loads(response_message.model_dump())
+    ]
 
-    for agent in agents:
-        agents[agent].set_frontend_url()
-        agents[agent].timeout = 240
-
-    # user_proxy.initiate_chat(manager, message="Ask the user what they want to do and solve their problem to the best of your ability.")
-
-def start_server(folder_name: str, server_port: int=54323, frontend_port: int=54322):
-    global autogen_thread, langchain_chroma_code, langchain_chroma_docs, directory
-
-    directory = folder_name
-
-    user_home = os.path.expanduser("~")
-    superdocs_directory = os.path.join(user_home, ".superdocs")
-    dot_replaced = folder_name.replace(".", "dot")
-
-    slugified = re.sub(r'\W+', '', dot_replaced)
+    if tool_calls:
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            function_response = tool_functions[function_name](function_args)
+            return_messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response
+            })
+    else:
+        return_messages.append({
+            "role": "assistant",
+            "content": f"Info retrieval bot says: \n {response_message.content}"
+        })
     
-    chroma_directory = os.path.join(superdocs_directory, slugified[-30:])
-    persistent_client = chromadb.PersistentClient(
-        chroma_directory
+    return return_messages
+
+@app.post("/plan")
+def break_down_problem(): 
+    # TODO: Have the user's objective be stated with OBJECTIVE to make it more clear to the model.
+    data = request.get_json()
+    directory = data["directory"]
+    user_messages = data["messages"]
+
+    PLANNING_SYSTEM_PROMPT = """
+    Given the following context and the user's objective, create a plan for modifying the codebase and running commands to solve the objective.
+    Create a step-by-step plan to accomplish these objectives without writing any code. Enclose the plan list in <plan> and end it with </plan>
+    The plan executor can only: replace content in files and provide code instructions to the user. 
+    Under each command, write subinstructions that break down the solution so that the code executor can write the code.
+    PLEASE DO NOT WRITE ANY CODE YOURSELF.
+    """ # Format the steps within function calls - relevant parts already be fully contextualized 
+
+    plan_changes_messages = [
+        {"role": "system", "content": PLANNING_SYSTEM_PROMPT},
+    ]
+    plan_changes_messages.extend(user_messages)
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4-1106-preview",
+        messages=plan_changes_messages,
+    )
+    response_message = response.choices[0].message
+
+    return {"role": "assistant", "content": f"Planner: \n {response_message.content}"}
+    
+@app.post("/execute")
+def solve_problem():
+    data = request.get_json()
+    directory = data["directory"]
+    messages = data["messages"]
+
+    # what should be the execution?
+    EXECUTOR_SYSTEM_PROMPT = """
+    Your job is to implement according to the instructions provided, messages exchanged between the assistant and the user, and the step you are provided.
+    Use the tools to the best of your ability. Ask a question if required.
+    
+    Format each replacement separately using these tags:
+    <replacement>
+        <filepath>
+            This should contain the filepath of the file you want to replace.
+        </filepath>
+        <original>
+            This should contain the original snippet that you are seeking to replace, directly from the file.
+        </original>
+        <updated>
+            This should contain the updated code that you wrote.
+        </updated>
+    </replacement>
+    """
+
+    solve_messages = [
+        {"role": "system", "content": EXECUTOR_SYSTEM_PROMPT}
+    ]
+    solve_messages.extend(messages)
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4-1106-preview",
+        messages=solve_messages,
+        tools=executor_tools_openai,
+        tool_choice="auto",
+        max_tokens=512
     )
 
-    langchain_chroma_code_collection = persistent_client.get_or_create_collection(
-        "code"
-    )
+    tool_functions = get_executor_tools(directory)
 
-    langchain_chroma_docs_collection = persistent_client.get_or_create_collection(
-        "docs"
-    )
+    response_message = response.choices[0].message
+    tool_calls = response_message.tool_calls
 
-    langchain_chroma_code = Chroma(
-        client=persistent_client,
-        collection_name="code",
-        embedding_function=embeddings
-    )
+    return_messages = [
+        response_message.model_dump()
+    ]
 
-    langchain_chroma_docs = Chroma(
-        client=persistent_client,
-        collection_name="docs",
-        embedding_function=embeddings
-    )
-
-    setup_autogen()
-
-    uvicorn.run(app, port=server_port)
-
-if __name__ == "__main__":
-    typer.run(start_server)
+    if tool_calls:
+        for tool_call in tool_calls:
+            function_name = tool_call.function.name
+            function_args = json.loads(tool_call.function.arguments)
+            function_response = tool_functions[function_name](function_args)
+            return_messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": function_name,
+                "content": function_response
+            })
+    else:
+        return_messages.append({
+            "role": "assistant",
+            "content": f"Executor bot says: \n {response_message.content}"
+        })
+    
+    return return_messages

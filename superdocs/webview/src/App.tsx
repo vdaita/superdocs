@@ -19,11 +19,14 @@ function App() {
   const [responseCallback, setResponseCallback] = useState(() => {});
 
   const [messages, setMessages] = useState<Message[]>([]);
+
   const [snippets, setSnippets] = useState<Snippet[]>([]);
+  const [hidden, setHidden] = useState<boolean[]>(Array(1000).fill(false));
   
   const [sources, setSources] = useState<any[]>([]);
 
   const [allSnippets, setAllSnippets] = useState<Snippet[]>([]);
+  const [directory, setDirectory] = useState("");
 
   useEffect(() => {
     VSCodeMessage.onMessage((message) => {
@@ -33,12 +36,6 @@ function App() {
       console.log(content, type);
       if(type == "messages"){
         console.log("Messages: ", content);
-        // for(var i = 0; i < content.length; i++){
-        //   if(!(typeof content[i].content === "string")){
-        //     content[i].content = undefined;
-        //     content[i].content_object = content[i].content
-        //   }
-        // }
         setMessages(content);
         if(content.length > 0){
           setLoading(true);
@@ -46,11 +43,12 @@ function App() {
           setLoading(false);
         }
       } else if (type == "snippet") {
-        // console.log("Current snippets: ", snippets, " new contents: ", content);
         setSnippets((existingArray) => [...existingArray, content]);
         setAllSnippets((existingArray) => [...existingArray, content]);
       } else if (type == "responseRequest") {
         requestUserResponse();
+      } else if (type == "info") {
+        setDirectory(content["directory"]);
       }
     });
   }, []);
@@ -59,62 +57,68 @@ function App() {
     setLoading(false);
   }
 
-  // let getAllSnippetsForMessages = (messages: Message[]) => {
-  //   let extractedSnippets: string[] = [];
-  //   for(var i = 0; i < messages.length; i++){
-  //     if(messages[i].from === "human"){
-  //       let messageSnippets = getSnippets(messages[i].content!);
-  //       console.log("For a message: ", messageSnippets);
-  //       extractedSnippets = [...extractedSnippets, ...messageSnippets];
-  //     }
-  //   }
-  //   console.log("Got snippet: ", extractedSnippets);
-  //   return extractedSnippets;
-  // }
-
-  let getSnippets = (markdownContent: string) => {
-    const codePattern = /```([a-zA-Z]+)\s*([\s\S]+?)```/g;
-    const codeSnippets = [];
-    let match;
-
-    while ((match = codePattern.exec(markdownContent)) !== null) {
-      const [, language, code] = match;
-      const cleanedCode = code.replace(new RegExp(`^\\s*${language}\\s*`, 'i'), '').trim();
-      codeSnippets.push(cleanedCode);
-    }
-
-    return codeSnippets;
-  }
-
-  let sendMessage = async (message: string) => {
-    let fullMessage = message;
-    if(snippets.length > 0){
-      fullMessage += "\n ### Code snippets: \n"
-      for(var i = 0; i < snippets.length; i++){
-        fullMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
+  let sendMessage = async (message: string, type: string) => {
+    let localMessages = [...messages];
+    try {
+      let fullMessage = message;
+      if(snippets.length > 0){
+        fullMessage += "\n ### Code snippets: \n"
+        for(var i = 0; i < snippets.length; i++){
+          fullMessage += "Filepath: " + snippets[i].filepath + "\n\n";
+          fullMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
+        }
       }
-    }
+  
+      setMessage("");
+      setSnippets([]);
+      setLoading(true);
 
-    if(messages.length === 0){
-      await axios.post('http://127.0.0.1:54323/initiate_chat', {
-        "message": fullMessage
+      localMessages.push({
+        role: "user",
+        content: fullMessage
+      });
+
+      setMessages(localMessages);
+  
+      console.log("Sending message to backend.");
+      
+      let withoutHiddenMessages = [];
+      for(var i = 0; i < localMessages.length; i++){
+        if(!hidden[i]){
+          withoutHiddenMessages.push(localMessages[i]);
+        }
+      }
+
+      let result = await axios.post(`http://127.0.0.1:5000/${type}`, {
+        "messages": withoutHiddenMessages,
+        "directory": directory
       }, {
         headers: {
           'Content-Type': "application/json;charset=UTF-8"
         }
       });
-      setMessage("");
-      setSnippets([]);
-      setLoading(true);
-      return;
+
+      console.log("Result from retrieval attempt: ", result);
+      if(result.data){
+        localMessages = [...localMessages, ...result.data];
+      } else {
+        localMessages = [...localMessages,  {role: "assistant", content: "There was an error"}];
+      }
+  
+      setMessages(localMessages);
+      setLoading(false);
+    } catch(e) {
+      console.error(e);
+      localMessages = [...localMessages, {role: 'assistant', content: "There was an error"}];
+      setMessages(localMessages)
+      setLoading(false);
     }
-    VSCodeMessage.postMessage({
-      type: "response",
-      content: fullMessage
-    });
-    setMessage("");
-    setSnippets([]);
-    setLoading(true);
+  }
+
+  let makeElementHidden = (index: number) => {
+    let tempHidden = [...hidden];
+    tempHidden[index] = !tempHidden[index];
+    setHidden(tempHidden);
   }
 
   let snippetsWithoutIndex = (arr: Snippet[], index: number) => {
@@ -139,89 +143,13 @@ function App() {
     setAllSnippets((oldArray) => snippetsWithoutIndex(oldArray, index));
   }
 
-  let getSources = async () => {
-    setLoading(true);
-    let sources = await axios({
-      method: "get",
-      url: "http://127.0.0.1:54323/get_sources"
-    });
+  let getSources = async () => {}
+  let reloadLocalCodebase = async () => {}
 
-    console.log(sources.data);
-
-    let data = sources.data;
-    let reformatted = []
-    for(var i = 0; i < data.documents.length; i++){
-      reformatted.push({
-        document: data.documents[i],
-        id: data.ids[i],
-        metadata: data.metadatas[i]
-      });
-    }
-    console.log("Reformatted: ", reformatted);
-    setSources(reformatted);
-
-    setLoading(false);
-  }
-
-  let reloadLocalCodebase = async () => {
-    console.log("Running reloadLocalCodebase");
-    setLoading(true);
-    try {
-      let res = await axios({
-        method: "post",
-        url: "http://127.0.0.1:54323/reload_local_sources"
-      });
-    } catch (e) {
-      console.error("Error: ", e);
-    }
-    setLoading(false);
-  }
-
-  let addSource = () => {
-
-  }
-
-  let deleteSources = () => {
-
-  }
-
-  // let saveCurrent = () => {
-
-  // }
-
-  let viewChanges = () => {
-    VSCodeMessage.postMessage({
-      type: "viewChanges"
-    })
-  }
-
-  let revertChanges = () => {
-    VSCodeMessage.postMessage({
-      type: "revertChanges"
-    })
-  }
-
-  let handleKeyPress = (event: any) => {
-      // console.log(event);
-      if(event.key === 'Enter') {
-          console.log("Sending message on enter");
-          sendMessage(message);
-      }
-  }
 
   let resetMessages = async () => {
-    VSCodeMessage.postMessage({
-      type: "reset"
-    });
-    await axios.post(
-      "http://localhost:54323/reset_conversation",
-      {},
-      {
-        headers: {
-          "Content-Type": "application/json"
-        }
-      }
-    )
+    setMessages([]);
+    setHidden(Array(1000).fill(false));
   }
 
   return (
@@ -229,34 +157,37 @@ function App() {
       <Tabs defaultValue="chat">
         <Tabs.List>
           <Tabs.Tab value="chat">Chat</Tabs.Tab>
-          <Tabs.Tab value="sources">Sources</Tabs.Tab>
+          {/* <Tabs.Tab value="sources">Sources</Tabs.Tab> */}
         </Tabs.List>
       
         <Tabs.Panel value="chat">
           <Box m="lg">
-            {/* {JSON.stringify(messages)} */}
+            <Text>Currently in directory: {directory}</Text>
+
             {messages.length > 0 && <Button variant="filled" onClick={() => resetMessages()}>Reset conversation</Button>}
 
             {messages.map((item, index) => (
-                <Card shadow="sm" m={4}>
+                <Card shadow="sm" m={4} key={index}>
                   <ScrollArea>
-                    {(item.content) && <EnhancedMarkdown content={(typeof item.content !== "string") ? JSON.stringify(item.content) : item.content} snippets={allSnippets} role={item.from + " to " + item.to}/>}
+                    {(item.content) && <EnhancedMarkdown message={item} hidden={hidden[index]} unhide={() => makeElementHidden(index)}/>}
                   </ScrollArea>
                 </Card>
               ))}
 
             
-            {(!loading && messages.length > 0) && <Group>
-              <Button variant="outline" size="xs" onClick={() => sendMessage("Continue")}>✅ Continue</Button>
-              <Button variant="outline" size="xs" onClick={() => sendMessage("Exit")}>❌ Exit</Button>
-            </Group>}
             <Text m="sm" size="xs">Press Enter to send and Shift-Enter for newline.</Text>
-            <Textarea placeholder="Provide feedback" disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)} onKeyPress={handleKeyPress}/>
-            <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message)}>➡️ Send</Button>
+            <Textarea placeholder="Provide feedback" disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)}/>
+            
+            <Box>
+              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "information")}>➡️ Load Further Context</Button>
+              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "plan")}>➡️ Create Plan</Button>
+              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "execute")}>➡️ Implement Instructions</Button>
+            </Box>
 
             {snippets.map((item, index) => (
               <Card shadow="sm" key={index}>
                 <ScrollArea>
+                  <Text>Filepath: {item.filepath}</Text>
                   <SyntaxHighlighter language={item.language} style={dark}>
                     {item.code}
                   </SyntaxHighlighter>
@@ -265,11 +196,6 @@ function App() {
               </Card>
             ))}
 
-            {messages.length >= 2 && <Group my="sm">
-              {/* <Button disabled={loading} variant="default" onClick={() => saveCurrent()}>Save Current</Button> */}
-              <Button disabled={loading} variant="default" onClick={() => viewChanges()}>View Changes</Button>
-              <Button disabled={loading} variant="default" onClick={() => revertChanges()}>Revert Changes</Button>
-            </Group>}
           </Box>
         </Tabs.Panel>
 

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactDom from 'react-dom'
 import Markdown from 'react-markdown'
 import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter'
@@ -6,14 +6,16 @@ import {dark} from 'react-syntax-highlighter/dist/esm/styles/prism'
 import ReactJson from 'react-json-view';
 import {Box, Group, Button, Text, Badge} from "@mantine/core";
 import { VSCodeMessage } from './VSCodeMessage'
+import ReactDiffViewer from 'react-diff-viewer';
+import {CopyToClipboard} from 'react-copy-to-clipboard';
 
-export default function EnhancedMarkdown({ content, snippets, role }) {
+export default function EnhancedMarkdown({ message, hidden, unhide }) {
 
-    let sendReplace = (snippet, newCode) => {
+    let sendReplace = (filepath, originalText, newText) => {
         let content = {
-            originalCode: snippet.code,
-            newCode: newCode,
-            filepath: snippet.filepath
+            originalCode: originalText,
+            newCode: newText,
+            filepath: filepath
         };
         console.log("Running sendReplace: ", content);
         VSCodeMessage.postMessage({
@@ -22,73 +24,126 @@ export default function EnhancedMarkdown({ content, snippets, role }) {
         });
     }
 
+    let sendWrite = (filepath, text) => {
+        let content = {
+            filepath: filepath,
+            text: text
+        };
+        console.log("Running sendWrite: ", content);
+        VSCodeMessage.postMessage({
+            type: "writeFile",
+            content: content
+        })
+    }
+
+    if(message["name"] === "replace_in_file") {
+        let parsedContent = JSON.parse(message["content"]);
+        return (
+            <Box>
+                <Badge size="xl" variant="gradient" gradient={{from: 'red', to: 'orange', deg: 90}}>
+                    Text Replacement
+                </Badge>
+                
+                {parsedContent["error"] && <Text>There was a processing error.</Text>}
+                {!parsedContent["error"] && <Box>
+                    <Text style={{fontWeight: 'bold'}}>Filepath: {parsedContent["filepath"]}</Text>
+                    <ReactDiffViewer oldValue={parsedContent["original_text"]} newValue={parsedContent["new_text"]}/>
+                </Box>}
+
+                <Button onClick={() => sendReplace(parsedContent["filepath"], parsedContent["original_text"], parsedContent["new_text"])}>Replace</Button>
+            </Box>
+        )
+    }
+
+    if(message["name"] === "write_file") {
+        let parsedContent = JSON.parse(message["content"]);
+        return (
+            <Box>
+                <Badge size="xl" variant="gradient" gradient={{from: 'red', to: 'orange'}}>
+                    Rewrite File
+                </Badge>
+                <Text style={{fontWeight: 'bold'}}>Filepath: {parsedContent["filepath"]}</Text>
+                
+                <CopyToClipboard text="String(children).replace(/\n$/, '')">
+                    <Box>
+                        <Text size="xs">Click to copy</Text>
+                        <SyntaxHighlighter
+                            children={parsedContent["text"]}
+                            style={dark}
+                            PreTag="div"
+                        />
+                    </Box>
+                </CopyToClipboard>
+
+                <Button onClick={() => sendWrite(parsedContent["filepath"], parsedContent["text"])}>Write</Button>
+            </Box>
+        )
+    }
+
     return (
         <>
             <Badge
                 size="xl"
                 variant="gradient"
-                gradient={{ from: 'blue', to: 'cyan', deg: 90 }}
+                gradient={message["role"] ? { from: 'blue', to: 'cyan', deg: 90 } : {from: 'red', to: 'orange', deg: 90}}
             >
-            {role}
+            {message["role"]}
+            </Badge>
+            
+            <Badge
+                size="md"
+                color={hidden ? "gray": "blue"}
+                onClick={unhide}
+            >
+                {hidden ? "Click to unhide" : "Click to hide"}
             </Badge>
 
-            <Markdown
-                children={content}
-                components={{
-                    code(props) {
-                        const {children, className, node, ...rest} = props
-                        const match = /language-(\w+)/.exec(className || '')
-                        
-                        // console.log("Language match: ", match, rest, node);
-                        if(match){
-                            if(match[1] === 'json'){
-                                try {
-                                    let jsonValue = JSON.parse(String(children).replace(/\n$/, ''));
-                                    return <ReactJson theme="hopscotch" src={jsonValue}/>
-                                } catch (e) {
-                                    // continue on
-                                }
-                            }    
+            <details>
+                <summary>{message["content"].split("\n")[0]}</summary>
+                <Markdown
+                    children={message["content"]}
+                    components={{
+                        code(props) {
+                            const {children, className, node, ...rest} = props
+                            const match = /language-(\w+)/.exec(className || '')
+                            
+                            // console.log("Language match: ", match, rest, node);
+                            if(match){
+                                if(match[1] === 'json'){
+                                    try {
+                                        let jsonValue = JSON.parse(String(children).replace(/\n$/, ''));
+                                        return <ReactJson theme="hopscotch" src={jsonValue}/>
+                                    } catch (e) {
+                                        // continue on
+                                    }
+                                }    
+                            }
+
+                            return match ? (
+                                <Box>
+                                    <CopyToClipboard text="String(children).replace(/\n$/, '')">
+                                        <Box>
+                                            <Text size="xs">Click to copy</Text>
+                                            <SyntaxHighlighter
+                                                {...rest}
+                                                children={String(children).replace(/\n$/, '')}
+                                                style={dark}
+                                                language={match[1]}
+                                                PreTag="div"
+                                            />
+                                        </Box>
+                                    </CopyToClipboard>
+
+                                </Box>
+                            ) : (
+                            <code {...rest} className={className}>
+                                {children}
+                            </code>
+                            )
                         }
-
-                        return match ? (
-                            <Box>
-                                {role === "human" && snippets.map((item, index) => (
-                                    (item.code.trim() === String(children).replace(/\n$/, '').trim()  && <Badge color="blue">Snippet {index}</Badge>)
-                                ))}
-
-                                <SyntaxHighlighter
-                                    {...rest}
-                                    children={String(children).replace(/\n$/, '')}
-                                    style={dark}
-                                    language={match[1]}
-                                    PreTag="div"
-                                />
-
-                                {(role === "ai" && snippets.length > 0) && <Group style={{flexWrap: "wrap"}}>
-                                    Replace in snippet:
-                                    {/* <Text>{JSON.stringify(snippets)}</Text> */}
-                                    {snippets.map((item, index) => (
-                                        <Button onClick={() => sendReplace(item, String(children).replace(/\n$/, ''))}>{index}</Button>
-                                    ))}
-                                </Group>}
-                            </Box>
-                        ) : (
-                        <code {...rest} className={className}>
-                            {children}
-                            {/* {snippets.length > 0 && 
-                                <Group style={{flexWrap: "wrap"}}>
-                                    Replace in snippet:
-                                    {snippets.map((item, index) => {
-                                        <Button onClick={() => sendReplace(item, String(children).replace(/\n$/, ''))}>{index}</Button>
-                                    })}
-                                </Group>
-                            } */}
-                        </code>
-                        )
-                    }
-                }}
-            />
+                    }}
+                />
+            </details>
         </>
     );
 }
