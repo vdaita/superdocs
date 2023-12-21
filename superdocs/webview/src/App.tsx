@@ -60,23 +60,27 @@ function App() {
   let sendMessage = async (message: string, type: string) => {
     let localMessages = [...messages];
     try {
-      let fullMessage = message;
+      let contextMessage = "CONTEXT \n";
       if(snippets.length > 0){
-        fullMessage += "\n ### Code snippets: \n"
+        contextMessage += "\n ### Code snippets: \n"
         for(var i = 0; i < snippets.length; i++){
-          fullMessage += "Filepath: " + snippets[i].filepath + "\n\n";
-          fullMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
+          contextMessage += "Filepath: " + snippets[i].filepath + "\n\n";
+          contextMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
         }
       }
-  
-      setMessage("");
-      setSnippets([]);
-      setLoading(true);
 
       localMessages.push({
         role: "user",
-        content: fullMessage
+        content: message
       });
+      localMessages.push({
+        role: "user",
+        content: contextMessage
+      });
+
+      setMessage("");
+      setSnippets([]);
+      setLoading(true);
 
       setMessages(localMessages);
   
@@ -89,7 +93,12 @@ function App() {
         }
       }
 
-      let result = await axios.post(`http://127.0.0.1:5000/${type}`, {
+      console.log("Sending message to backend: ", `http://127.0.0.1:8123/${type}`, {
+        "messages": withoutHiddenMessages,
+        "directory": directory
+      })
+
+      let result = await axios.post(`http://127.0.0.1:8123/${type}`, {
         "messages": withoutHiddenMessages,
         "directory": directory
       }, {
@@ -144,12 +153,27 @@ function App() {
   }
 
   let getSources = async () => {}
-  let reloadLocalCodebase = async () => {}
 
 
   let resetMessages = async () => {
     setMessages([]);
     setHidden(Array(1000).fill(false));
+  }
+
+  let loadVectorstore = async () => {
+    setLoading(true);
+    try {
+      await axios.post("http://127.0.0.1:8123/load_vectorstore", {
+        "directory": directory
+      },  {
+        headers: {
+          'Content-Type': "application/json;charset=UTF-8"
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
   }
 
   return (
@@ -165,6 +189,7 @@ function App() {
             <Text>Currently in directory: {directory}</Text>
 
             {messages.length > 0 && <Button variant="filled" onClick={() => resetMessages()}>Reset conversation</Button>}
+            <Button variant="outline" onClick={() => loadVectorstore()}>Load vectorstore</Button>
 
             {messages.map((item, index) => (
                 <Card shadow="sm" m={4} key={index}>
@@ -202,7 +227,7 @@ function App() {
         <Tabs.Panel value="sources">
           <Box m="lg">
             <Button disabled={loading} onClick={() => getSources()} m="sm">Check sources</Button>
-            <Button disabled={loading} onClick={() => reloadLocalCodebase()} m="sm">Load/reload local codebase</Button>
+            <Button disabled={loading} onClick={() => loadVectorstore()} m="sm">Load/reload local codebase</Button>
 
             {loading && <Loader/>}
           
@@ -220,3 +245,4 @@ function App() {
 }
 
 export default App;
+

@@ -11,6 +11,8 @@ import {CopyToClipboard} from 'react-copy-to-clipboard';
 
 export default function EnhancedMarkdown({ message, hidden, unhide }) {
 
+    
+
     let sendReplace = (filepath, originalText, newText) => {
         let content = {
             originalCode: originalText,
@@ -36,49 +38,25 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
         })
     }
 
-    if(message["name"] === "replace_in_file") {
-        let parsedContent = JSON.parse(message["content"]);
-        return (
-            <Box>
-                <Badge size="xl" variant="gradient" gradient={{from: 'red', to: 'orange', deg: 90}}>
-                    Text Replacement
-                </Badge>
-                
-                {parsedContent["error"] && <Text>There was a processing error.</Text>}
-                {!parsedContent["error"] && <Box>
-                    <Text style={{fontWeight: 'bold'}}>Filepath: {parsedContent["filepath"]}</Text>
-                    <ReactDiffViewer oldValue={parsedContent["original_text"]} newValue={parsedContent["new_text"]}/>
-                </Box>}
+    if(message.content.startsWith("REPLACEMENT")) {
+        const parsedContent = JSON.parse(message.content.replace("REPLACEMENT\n", "").trim())
 
+        return (
+            <>
+                <Badge
+                    size="xl"
+                    variant="gradient"
+                    gradient={message["role"] ? { from: 'blue', to: 'cyan', deg: 90 } : {from: 'red', to: 'orange', deg: 90}}
+                >
+                    Assistant: Text Replacement
+                </Badge>
+                <Text style={{fontWeight: "bold"}}>Filepath: {parsedContent["filepath"]}</Text>
+                <ReactDiffViewer oldValue={parsedContent["original_text"]} newValue={parsedContent["new_text"]}/>
                 <Button onClick={() => sendReplace(parsedContent["filepath"], parsedContent["original_text"], parsedContent["new_text"])}>Replace</Button>
-            </Box>
+            </>
         )
     }
 
-    if(message["name"] === "write_file") {
-        let parsedContent = JSON.parse(message["content"]);
-        return (
-            <Box>
-                <Badge size="xl" variant="gradient" gradient={{from: 'red', to: 'orange'}}>
-                    Rewrite File
-                </Badge>
-                <Text style={{fontWeight: 'bold'}}>Filepath: {parsedContent["filepath"]}</Text>
-                
-                <CopyToClipboard text="String(children).replace(/\n$/, '')">
-                    <Box>
-                        <Text size="xs">Click to copy</Text>
-                        <SyntaxHighlighter
-                            children={parsedContent["text"]}
-                            style={dark}
-                            PreTag="div"
-                        />
-                    </Box>
-                </CopyToClipboard>
-
-                <Button onClick={() => sendWrite(parsedContent["filepath"], parsedContent["text"])}>Write</Button>
-            </Box>
-        )
-    }
 
     return (
         <>
@@ -121,7 +99,7 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
 
                             return match ? (
                                 <Box>
-                                    <CopyToClipboard text="String(children).replace(/\n$/, '')">
+                                    <CopyToClipboard text={String(children).replace(/\n$/, '')}>
                                         <Box>
                                             <Text size="xs">Click to copy</Text>
                                             <SyntaxHighlighter
