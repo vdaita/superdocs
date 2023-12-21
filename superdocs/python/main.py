@@ -14,6 +14,7 @@ from flask import Flask
 from flask_cors import CORS, cross_origin
 import os
 import logging
+import re
 
 load_dotenv()
 
@@ -142,120 +143,17 @@ retrieval_tools_openai = [
     }
 ]
 
-def get_executor_tools(directory):
-    def replace_in_file(args):
-        filepath = args["filepath"]
-        first_few_lines = args["first_few_lines_to_replace"]
-        last_few_lines = args["last_few_lines_to_replace"]
-        original_text = args["original_text"]
-        new_text = args["new_text"]
+def extract_content(text, tag):
+ pattern = r'<' + tag + '>(.*?)</' + tag + '>'
+ matches = re.findall(pattern, text, re.DOTALL)
+ return matches
 
-        closest_filepath = find_closest_file(directory, filepath)
-        if not(closest_filepath):
-            return '{"error": True}'
-
-        file = open(os.path.join(directory, closest_filepath), "r+")
-
-        contents = file.read()
-        lines = file.split("\n")
-        best_match = find_best_match(original_text, contents)
-        
-        code_original_text = "\n".join(lines[best_match.start:best_match.end + 1])
-
-        return json.dumps({
-            "filepath": closest_filepath,
-            "first_few_lines": first_few_lines,
-            "last_few_lines": last_few_lines,
-            "original_text": code_original_text,
-            "new_text": new_text
-        })
-    def write_file(args):
-
-        filepath = args["filepath"]
-        new_text = args["text"]
-
-        return json.dumps({
-            "filepath": filepath,
-            "text": new_text
-        })
-        # file = open(os.path.join(directory, filepath), "w+")
-        # file.write(new_text)
-        # file.close()
-        # return "Successfully wrote to file" # TODO: replace with JSON formatting
-    def add_feedback(args):
-        return args["content"]
-    return  {"replace_in_file": replace_in_file, "write_file": write_file, "add_feedback": add_feedback}
-
-executor_tools_openai = [
-    {
-        "type": "function",
-        "function": {
-            "name": "replace_in_file",
-            "description": "Replace content in the desired filepath. Use this to replace snippets.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filepath": {
-                        "type": "string",
-                        "description": "Filepath to the file you are doing the replacement on."
-                    },
-                    "first_few_lines_to_replace": {
-                        "type": "string",
-                        "description": "The first few lines of the text you want to replace."
-                    },
-                    "last_few_lines_to_replace": {
-                        "type": "string",
-                        "description": "Last few lines of the text you want to replace."
-                    },
-                    "original_text": {
-                        "type": "string",
-                        "description": "Text within the original file that should be removed and replaced."
-                    },
-                    "new_text": {
-                        "type": "string",
-                        "description": "Text that should be inserted and used as replacement for original_text."
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Create and write file to the desired filepath.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filepath": {
-                        "type": "string",
-                        "description": "Filepath to the file you are writing to."
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "Content to write."
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_feedback",
-            "description": "Provide additional instructions and information to the user.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "Text"
-                    }
-                }
-            }
-        }
-    }
-]
+def remove_code_block(text):
+    # Remove "```languagename" at the start
+    text = re.sub(r'^```[a-zA-Z0-9]+\n', '', text)
+    # Remove '```' at the end
+    text = re.sub(r'```$', '', text)
+    return text
 
 @app.post("/information")
 def extract_information():
@@ -383,6 +281,7 @@ def solve_problem():
     Your job is to implement according to the instructions provided, messages exchanged between the assistant and the user, and the step you are provided.
     Use the tools to the best of your ability. Ask a question if required.
     
+    State additional information outside of replacement tags.
     Format each replacement separately using these tags:
     <replacement>
         <filepath>
@@ -405,35 +304,55 @@ def solve_problem():
     response = openai_client.chat.completions.create(
         model="gpt-4-1106-preview",
         messages=solve_messages,
-        tools=executor_tools_openai,
-        tool_choice="auto",
-        max_tokens=512
+        max_tokens=1024,
+        temperature=0.1
     )
+    response_message = response.choices[0].message.content
 
-    tool_functions = get_executor_tools(directory)
-
-    response_message = response.choices[0].message
-    tool_calls = response_message.tool_calls
+    print("Response message: ", response_message)
+    # Extract the replacement content and then convert to Javascript. Have it be a message from the tool
 
     return_messages = [
-        response_message.model_dump()
+        
     ]
 
-    if tool_calls:
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            function_response = tool_functions[function_name](function_args)
-            return_messages.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "name": function_name,
-                "content": function_response
-            })
-    else:
+    non_response_text = response_message    
+    replacements = extract_content(response_message, "replacement")
+    for replacement in replacements:
+        filepath = extract_content(replacement, "filepath")[0]
+        closest_filepath = find_closest_file(directory, filepath)
+        file = open(os.path.join(directory, closest_filepath), "r+")
+    
+
+        original_code = extract_content(replacement, "original")[0]
+        updated_code = extract_content(replacement, "updated")[0]
+        
+        original_code = remove_code_block(original_code)
+        updated_code = remove_code_block(updated_code)
+
+        contents = file.read()
+        grounded_original_text = find_best_match(original_code, contents)
+        
+        non_response_text = non_response_text.replace(replacement, "") # Remove the replacement text from the messages
+        
+        message_str = "REPLACEMENT\n" + json.dumps({
+            "filepath": closest_filepath,
+            "original_text": grounded_original_text,
+            "new_text": updated_code
+        })
         return_messages.append({
             "role": "assistant",
-            "content": f"Executor bot says: \n {response_message.content}"
+            "content": message_str
         })
+
+    non_response_text = non_response_text.replace("<replacement>", "")
+    non_response_text = non_response_text.replace("</replacement>", "")
+
+    return_messages.append({
+        "role": "assistant",
+        "content": non_response_text
+    })
+
+    print("Returning messages: ", return_messages)
     
     return return_messages

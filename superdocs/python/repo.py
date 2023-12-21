@@ -30,21 +30,26 @@ def find_closest_file(directory, filepath):
     if closest_match[1] < 90:
         return None
     else:
+        print("Found closest file: ", directory, filepath)
         return closest_match[0]
 
 def list_non_ignored_files(directory):
     code_suffixes = [".py", ".js", ".jsx", ".tsx", ".ts", ".cc", ".hpp", ".cpp", ".c", ".rb"] # make a better list
-    find_command = f"git ls-files --exclude-standard && git ls-files --exclude-standard -o"
+    find_command = f"cd {directory} && git ls-files --exclude-standard && git ls-files --exclude-standard -o"
     result = subprocess.run(find_command, shell=True, check=True, text=True, capture_output=True)
     non_ignored_files = result.stdout.splitlines()
 
-    suffix_non_ignored_files = []
-    for filepath in non_ignored_files:
-        ext = filepath.split(".")[-1]
-        if ext in code_suffixes:
-            suffix_non_ignored_files.append(filepath)
+    print("Found non_ignored_files output: ", non_ignored_files)
 
-    return suffix_non_ignored_files
+    # suffix_non_ignored_files = [] - BUGGY
+    # for filepath in non_ignored_files:
+    #     ext = filepath.split(".")[-1]
+    #     if ext in code_suffixes:
+    #         suffix_non_ignored_files.append(filepath)
+
+    # print("Found non_ignored_files: ", suffix_non_ignored_files)
+
+    return non_ignored_files
 
 def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parser_threshold=1000):
     gitignore_path = os.path.join(directory, ignore_file)
@@ -73,3 +78,7 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
     text_splitter = RecursiveCharacterTextSplitter(chunk_size = 800, chunk_overlap = 100, length_function = len)
     split_documents = text_splitter.split_documents(documents)
     return split_documents
+
+if __name__ == "__main__":
+    print("Main")
+    list_non_ignored_files("/Users/vijaydaita/Files/uiuc/rxassist/rxassist/")
