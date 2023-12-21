@@ -18,9 +18,17 @@ import re
 
 load_dotenv()
 
+# openai_client = OpenAI(
+#     api_key=os.environ["OPENROUTER_API_KEY"],
+#     base_url="https://openrouter.ai/api/v1"
+# )
+
+# model_name = "phind/phind-codellama-34b"
+
 openai_client = OpenAI(
     api_key=os.environ["OPENAI_API_KEY"]
-) # Langchain seems to have a mid functions implementation 
+)
+model_name = "gpt-4-1106-preview"
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
@@ -29,10 +37,9 @@ logging.getLogger('flask_cors').level = logging.DEBUG
 
 embeddings = HuggingFaceEmbeddings(model_name="TaylorAI/bge-micro-v2")
 perplexity_model = ChatOpenAI(
-    model_name="pplx-api/",
+    model_name="pplx-70b-online",
     openai_api_key=os.environ["PERPLEXITY_API_KEY"],
     openai_api_base="https://api.perplexity.ai",
-    headers={"HTTP-Referer": "http://localhost:3000"},
     max_tokens=800
 )
 
@@ -44,10 +51,12 @@ db = {
 def get_retrieval_tools(directory):
     def external_search(args):
         query = args["query"]
-        return f"Query: {query} \n \n Response: Test Perplexity Response"
-        # return f"Query: {query} \n \n Response: {perplexity_model([HumanMessage(query)]).content}"
+        # return f"Query: {query} \n \n Response: Test Perplexity Response"
+        model_response = perplexity_model([HumanMessage(content=query)]).content
+        print("Perplexity model response: ", query, model_response)
+        return f"Query: {query} \n \n Response: {model_response}"
     def read_file(args):
-        filepath = args["filepath"]
+        filepath = args["query"]
         closest_filepath = find_closest_file(directory, filepath)
         if not(closest_filepath):
             return "Filepath does not exist"
@@ -57,10 +66,12 @@ def get_retrieval_tools(directory):
         return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
     def semantic_search(args):
         global db
-        query = args["query"]
-        docs = db["vectorstore"].similarity_search(query)
-        snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: {doc.page_content} \n ------" for doc in docs])
-        return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
+        if db["vectorstore"]:
+            query = args["query"]
+            docs = db["vectorstore"].similarity_search(query)
+            snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: {doc.page_content} \n ------" for doc in docs])
+            return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
+        return "Semantic search has been disabled."
     def lexical_search(args):
         """Accepts regular expression search query and searches for all instances of it."""
         query = args["query"]
@@ -70,78 +81,11 @@ def get_retrieval_tools(directory):
             return "Too many instances"
         return f"File lexical search: {query} \n \n Retrieved content: {searched_content}"
     return {
-        "external_search": external_search,
-        "read_file": read_file,
-        "semantic_search": semantic_search,
-        "lexical_search": lexical_search
+        "external": external_search,
+        "file": read_file,
+        "semantic": semantic_search,
+        "lexical": lexical_search
     }
-
-retrieval_tools_openai = [
-    {
-        "type": "function",
-        "function": {
-            "name": "external_search",
-            "description": "Question-formatted query. Query external search for specific subinformation (break the question down into pieces of info to retrieve). Useful for understanding errors or getting up to date information about libraries.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Specific information to be queried"
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read a file on the filesystem",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "filepath": {
-                        "type": "string",
-                        "description": "Specific filepath to retrieve"
-                    }
-                }
-            }
-        }
-    },
-    # {
-    #     "type": "function",
-    #     "function": {
-    #         "name": "semantic_search",
-    #         "description": "Semantically search for information on the file system. Useful for when you don't know the exact name of a tool.",
-    #         "parameters": {
-    #             "type": "object",
-    #             "properties": {
-    #                 "query": {
-    #                     "type": "string",
-    #                     "description": "Query for semantic search"
-    #                 }
-    #             }
-    #         }
-    #     }
-    # },
-    {
-        "type": "function",
-        "function": {
-            "name": "lexical_search",
-            "description": "Lexically search for information on the filesystem. Useful for when you do know the name of a tool.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Regular expression search term"
-                    }
-                }
-            }
-        }
-    }
-]
 
 def extract_content(text, tag):
  pattern = r'<' + tag + '>(.*?)</' + tag + '>'
@@ -155,6 +99,16 @@ def remove_code_block(text):
     text = re.sub(r'```$', '', text)
     return text
 
+@app.post("/load_vectorstore")
+def load_vectorstore():
+    data = request.get_json()
+    directory = data["directory"]
+    print("Loading the vectorstore....")
+    documents = get_documents(directory)
+    print("Got the documents...")
+    db["vectorstore"] = Chroma.from_documents(documents, embeddings)
+    return {"ok": True}
+
 @app.post("/information")
 def extract_information():
     data = request.get_json()
@@ -162,28 +116,38 @@ def extract_information():
     messages = data["messages"]
     global db
 
-    # if db["directory"] != directory:
-    #     documents = get_documents(directory)
-    #     db["vectorstore"] = Chroma.from_documents(documents, embeddings)
-    #     pass
+    print("Received: ", data)
 
     # Add all relevant information relating to adding context
     existing_context = ""
+
+    user_objective_list = ""
 
     for message in messages:
         if message["role"] == "user":
             if message["content"].startswith("CONTEXT"):
                 existing_context += message["content"]
+            else:
+                user_objective_list += message["content"] + "\n"
         elif message["role"] == "tool":
             existing_context += message["content"]
-    
+
     INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
     Your job is to serve as an context extraction system for a coding assistant.
     You have the ability to use functions to extract context, namely: external search, codebase semantic search, codebase lexical search, file reading, and user asking.
     You will be given the following information: Filesystem information, existing context and objective.
     Use the absolute minimum queries required to find the information required to solve the objective. 
-    
     Output DONE if there is no further information that needs to be provided as context.
+    
+    Generate a list of requests formatted in the following manner:
+    If one or more external API, documentation, or information search requests should be made, enclose each external request separately with: <external>Your search query</external> <external>...</external>
+    Be specific about the context of your environment when making external information search requests (like stating the programming language).
+
+    If one or more local codebase semantic search queries should be made, enclose each local codebase semantic search query separately with: <semantic>Your semantic search query</semantic>
+    If one or more codebase lexical search queries should be made, enclose each local codebase lexical search query separately with: <lexical>Your query</lexical> 
+    If one or more file read queries should be made, enclose each file read queries separately with: <file>The filepath you are requesting</file>
+
+    Let's think step by step.
     """
 
     CONTEXT_MESSAGE = f"""
@@ -193,7 +157,7 @@ def extract_information():
     Existing context:
     {existing_context}
     \n \n
-    Objective: {messages[-1]["content"]}
+    Objective: {user_objective_list}
     """
 
     messages = [
@@ -210,35 +174,31 @@ def extract_information():
     tool_functions = get_retrieval_tools(directory)
 
     response = openai_client.chat.completions.create(
-        model="gpt-4-1106-preview",
+        model=model_name,
         messages=messages,
-        tools=retrieval_tools_openai,
-        tool_choice="auto",
-        max_tokens=512
+        max_tokens=512,
+        temperature=0.1
     )
-    response_message = response.choices[0].message
-    tool_calls = response_message.tool_calls
 
-    return_messages = [
-        json.loads(response_message.model_dump())
-    ]
+    response_message = response.choices[0].message.content
 
-    if tool_calls:
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            function_args = json.loads(tool_call.function.arguments)
-            function_response = tool_functions[function_name](function_args)
+    print("Response message: ", response_message)
+
+    return_messages = []
+
+    for function_name in tool_functions.keys():
+        extractions = extract_content(response_message, function_name)
+        for extraction in extractions:
+            args = {"query": extraction.strip()}
             return_messages.append({
-                "tool_call_id": tool_call.id,
-                "role": "tool",
-                "name": function_name,
-                "content": function_response
+                "role": "assistant",
+                "content": tool_functions[function_name](args)
             })
-    else:
-        return_messages.append({
-            "role": "assistant",
-            "content": f"Info retrieval bot says: \n {response_message.content}"
-        })
+
+    return_messages.append({
+        "role": "assistant",
+        "content": f"Info retrieval bot says: \n {response_message}"
+    })
     
     return return_messages
 
@@ -249,12 +209,16 @@ def break_down_problem():
     directory = data["directory"]
     user_messages = data["messages"]
 
+    print("Received: ", data)
+
     PLANNING_SYSTEM_PROMPT = """
     Given the following context and the user's objective, create a plan for modifying the codebase and running commands to solve the objective.
     Create a step-by-step plan to accomplish these objectives without writing any code. Enclose the plan list in <plan> and end it with </plan>
     The plan executor can only: replace content in files and provide code instructions to the user. 
     Under each command, write subinstructions that break down the solution so that the code executor can write the code.
     PLEASE DO NOT WRITE ANY CODE YOURSELF.
+    
+    Let's think step by step.
     """ # Format the steps within function calls - relevant parts already be fully contextualized 
 
     plan_changes_messages = [
@@ -263,18 +227,22 @@ def break_down_problem():
     plan_changes_messages.extend(user_messages)
 
     response = openai_client.chat.completions.create(
-        model="gpt-4-1106-preview",
+        model=model_name,
         messages=plan_changes_messages,
     )
-    response_message = response.choices[0].message
+    response_message = response.choices[0].message.content
 
-    return {"role": "assistant", "content": f"Planner: \n {response_message.content}"}
+    print("Response message: ", response_message)
+
+    return [{"role": "assistant", "content": f"Planner: \n {response_message}"}]
     
 @app.post("/execute")
 def solve_problem():
     data = request.get_json()
     directory = data["directory"]
     messages = data["messages"]
+    
+    print("Received: ", data)
 
     # what should be the execution?
     EXECUTOR_SYSTEM_PROMPT = """
@@ -294,6 +262,8 @@ def solve_problem():
             This should contain the updated code that you wrote.
         </updated>
     </replacement>
+
+    Let's think step by step.
     """
 
     solve_messages = [
@@ -302,14 +272,13 @@ def solve_problem():
     solve_messages.extend(messages)
 
     response = openai_client.chat.completions.create(
-        model="gpt-4-1106-preview",
+        model=model_name,
         messages=solve_messages,
         max_tokens=1024,
         temperature=0.1
     )
+    print("Received response: ", response)
     response_message = response.choices[0].message.content
-
-    print("Response message: ", response_message)
     # Extract the replacement content and then convert to Javascript. Have it be a message from the tool
 
     return_messages = [
