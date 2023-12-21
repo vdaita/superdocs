@@ -246,7 +246,7 @@ def solve_problem():
 
     # what should be the execution?
     EXECUTOR_SYSTEM_PROMPT = """
-    Your job is to implement according to the instructions provided, messages exchanged between the assistant and the user, and the step you are provided.
+    Your job is to implement according to the instructions provided, messages exchanged between the assistant (planner and information retriever) and the user and the steps and instructors provided.
     Use the tools to the best of your ability. Ask a question if required.
     
     State additional information outside of replacement tags.
@@ -319,7 +319,7 @@ def solve_problem():
 
     return_messages.append({
         "role": "assistant",
-        "content": non_response_text
+        "content": f"Executor: \n {non_response_text}"
     })
 
     print("Returning messages: ", return_messages)

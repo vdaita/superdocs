@@ -39,7 +39,7 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
     }
 
     if(message.content.startsWith("REPLACEMENT")) {
-        const parsedContent = JSON.parse(message.content.replace("REPLACEMENT\n", "").strip())
+        const parsedContent = JSON.parse(message.content.replace("REPLACEMENT\n", "").trim())
 
         return (
             <>
