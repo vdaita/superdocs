@@ -52,7 +52,7 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
                 </Badge>
                 <Text style={{fontWeight: "bold"}}>Filepath: {parsedContent["filepath"]}</Text>
                 <ReactDiffViewer oldValue={parsedContent["original_text"]} newValue={parsedContent["new_text"]}/>
-                <Button>Replace</Button>
+                <Button onClick={() => sendReplace(parsedContent["filepath"], parsedContent["original_text"], parsedContent["new_text"])}>Replace</Button>
             </>
         )
     }
