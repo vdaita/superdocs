@@ -3,7 +3,7 @@ from langchain.document_loaders import GitLoader
 from langchain.document_loaders.generic import GenericLoader
 from langchain.document_loaders.parsers import LanguageParser
 import os
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
 from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage, Document
 from langchain.prompts import PromptTemplate
@@ -52,33 +52,53 @@ def list_non_ignored_files(directory):
     return non_ignored_files
 
 def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parser_threshold=1000):
-    gitignore_path = os.path.join(directory, ignore_file)
-    gitignore_rules = []
-    if os.path.exists(gitignore_path):
-        with open(gitignore_path, "r") as f:
-            lines = f.readlines()
-            for line in lines:
-                if len(line) > 0:
-                    gitignore_rules.append(line.strip())
+    files = list_non_ignored_files(directory)
+    code_suffixes = ["py", "js", "jsx", "tsx", "ts", "cc", "hpp", "cpp", "rb"] # make a better list
+    language_map = {
+        "py": Language.PYTHON,
+        "js": Language.JS,
+        "java": Language.JAVA,
+        "ts": Language.TS,
+        "tsx": Language.TS,
+        "js": Language.JS,
+        "jsx": Language.JS,
+        "cc": Language.CPP,
+        "hpp": Language.CPP,
+        "cpp": Language.CPP,
+        "rb": Language.RUBY
+    }
 
-    code_suffixes = [".py", ".js", ".jsx", ".tsx", ".ts", ".cc", ".hpp", ".cpp", ".c", ".rb"] # make a better list
+    all_docs = []
 
-    print("Following Gitignore Rules: ", gitignore_rules)
+    for rfilepath in files:
+        ext = rfilepath.split(".")[-1]
+        if ext in code_suffixes:
+            filepath = os.path.join(directory, rfilepath)
+            print("Loading: ", filepath)
+            file = open(filepath, "r")
+            contents = file.read()
+            file.close()      
 
-    loader = GenericLoader.from_filesystem(
-        directory,
-        glob="**/*",
-        exclude=gitignore_rules,
-        suffixes=code_suffixes,
-        parser=LanguageParser(parser_threshold=parser_threshold)
-    ) # add a random check that if a file is longer than k, it should not be included in the file.
+            splitter = RecursiveCharacterTextSplitter.from_language(
+                language=language_map[ext],
+                chunk_size=250,
+                chunk_overlap=20
+            )
 
-    documents = loader.load()
+            original_doc = Document(
+                page_content=contents,
+                metadata={
+                    "source": filepath
+                }
+            )
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size = 800, chunk_overlap = 100, length_function = len)
-    split_documents = text_splitter.split_documents(documents)
-    return split_documents
+            docs = splitter.split_documents([original_doc])
+
+            all_docs.extend(docs)
+            print("Finished.")
+   
+    return all_docs
 
 if __name__ == "__main__":
     print("Main")
-    list_non_ignored_files("/Users/vijaydaita/Files/uiuc/rxassist/rxassist/")
+    print(get_documents("/Users/vijaydaita/Files/uiuc/rxassist/rxassist/"))

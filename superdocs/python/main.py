@@ -18,6 +18,14 @@ import re
 
 load_dotenv()
 
+## Together.ai
+openai_client = OpenAI(
+    api_key=os.environ["TOGETHER_API_KEY"],
+    base_url="https://api.together.xyz/v1"
+)
+model_name="Phind/Phind-CodeLlama-34B-v2"
+
+## OpenRouter
 # openai_client = OpenAI(
 #     api_key=os.environ["OPENROUTER_API_KEY"],
 #     base_url="https://openrouter.ai/api/v1"
@@ -25,10 +33,11 @@ load_dotenv()
 
 # model_name = "phind/phind-codellama-34b"
 
-openai_client = OpenAI(
-    api_key=os.environ["OPENAI_API_KEY"]
-)
-model_name = "gpt-4-1106-preview"
+## OpenAI
+# openai_client = OpenAI(
+#     api_key=os.environ["OPENAI_API_KEY"]
+# )
+# model_name = "gpt-4-1106-preview"
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
@@ -65,13 +74,16 @@ def get_retrieval_tools(directory):
         file.close()
         return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
     def semantic_search(args):
-        global db
-        if db["vectorstore"]:
-            query = args["query"]
-            docs = db["vectorstore"].similarity_search(query)
-            snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: {doc.page_content} \n ------" for doc in docs])
-            return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
-        return "Semantic search has been disabled."
+        try:
+            global db
+            if db["vectorstore"]:
+                query = args["query"]
+                docs = db["vectorstore"].similarity_search(query)
+                snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: ``\n{doc.page_content}\n``` \n ------" for doc in docs])
+                return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
+            return "Semantic search has been disabled."
+        except Exception:
+            return "Semantic search has been disabled."
     def lexical_search(args):
         """Accepts regular expression search query and searches for all instances of it."""
         query = args["query"]
@@ -107,6 +119,7 @@ def load_vectorstore():
     documents = get_documents(directory)
     print("Got the documents...")
     db["vectorstore"] = Chroma.from_documents(documents, embeddings)
+    db["directory"] = directory
     return {"ok": True}
 
 @app.post("/information")
@@ -136,7 +149,8 @@ def extract_information():
     Your job is to serve as an context extraction system for a coding assistant.
     You have the ability to use functions to extract context, namely: external search, codebase semantic search, codebase lexical search, file reading, and user asking.
     You will be given the following information: Filesystem information, existing context and objective.
-    Use the absolute minimum queries required to find the information required to solve the objective. 
+    Use the absolute minimum queries required to find the information required to solve the objective. Limit the number of queries made to 5.
+    If you use more queries than is required, you will be penalized 20 points.
     Output DONE if there is no further information that needs to be provided as context.
     
     Generate a list of requests formatted in the following manner:
@@ -229,6 +243,7 @@ def break_down_problem():
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=plan_changes_messages,
+        temperature=0.1
     )
     response_message = response.choices[0].message.content
 
@@ -274,7 +289,7 @@ def solve_problem():
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=solve_messages,
-        max_tokens=1024,
+        max_tokens=1536,
         temperature=0.1
     )
     print("Received response: ", response)
