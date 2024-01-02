@@ -8,7 +8,7 @@ import tiktoken
 from langchain.text_splitter import TokenTextSplitter
 from langchain.prompts import PromptTemplate
 from langchain.schema import StrOutputParser
-
+from langchain.chains.summarize import load_summarize_chain
 
 model = ChatOpenAI()
 text_splitter = TokenTextSplitter(chunk_size=10000, chunk_overlap=500)
@@ -39,7 +39,6 @@ def join_texts(texts: List[str]) -> str:
 def summary(objective, content):
     llm = ChatOpenAI(temperature = 0, model = "gpt-3.5-turbo-16k-0613") # TODO: Switch to Mistral
 
-    text_splitter = RecursiveCharacterTextSplitter(separators=["\n\n", "\n"], chunk_size = 10000, chunk_overlap=500)
     docs = text_splitter.create_documents([content])
     
     map_prompt = """

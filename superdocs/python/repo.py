@@ -13,24 +13,16 @@ import json
 import time
 from pydantic import BaseModel, Field
 import subprocess
-from thefuzz import process
+from thefuzz import process, fuzz
 
-load_dotenv(".env")
-def refresh_local_documents(langchain_chroma):
-    existing_documents = langchain_chroma.get()
-    existing_files = {}
-    for document in existing_documents:
-        existing_files[document.metadata["source"]] = document.metadata["last_updated"]
-    
-    new_files = {}
-
-def find_closest_file(directory, filepath):
+def find_closest_file(directory, filepath, threshold=95):
     files = list_non_ignored_files(directory)
-    closest_match = process.extractOne(filepath, files)
-    if closest_match[1] < 90:
-        return None
+    closest_match = process.extractOne(filepath, files, scorer=fuzz.token_sort_ratio)
+    print("find_closest_file: closest_match: ", closest_match)
+    if closest_match[1] < threshold:
+        return filepath
     else:
-        print("Found closest file: ", directory, filepath)
+        print("Found closest file in find_closest_file: ", directory, filepath, closest_match[0])
         return closest_match[0]
 
 def list_non_ignored_files(directory):
@@ -88,7 +80,8 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
             original_doc = Document(
                 page_content=contents,
                 metadata={
-                    "source": filepath
+                    "source": filepath,
+                    "last_modified": time.time()
                 }
             )
 
