@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from 'react';
 import './App.css';
-import { Container, Card, Textarea, Group, Button, Box, Loader, Tabs, Text, ScrollArea } from "@mantine/core"
+import { Container, Card, Textarea, Group, Button, Box, Badge, Loader, Tabs, Text, Checkbox, TextInput, ScrollArea, Accordion, Paper} from "@mantine/core"
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { Message } from './lib/Message';
@@ -9,28 +9,36 @@ import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter';
 import { dark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import axios, { all } from 'axios';
 import ReactJson from 'react-json-view';
+import { notifications } from '@mantine/notifications';
+import { toast } from 'react-toastify';
+import ReactDiffViewer from 'react-diff-viewer';
 
+let serverUrl = "http://127.0.0.1:8123/"
 
 function App() {
 
   const [message, setMessage] = useState("");
-
+  const [mode, setMode] = useState<string | null>("information");
   const [loading, setLoading] = useState(false);
-  const [responseCallback, setResponseCallback] = useState(() => {});
+
+  const [objective, setObjective] = useState<string>();
+  const [plan, setPlan] = useState<string>("");
+  const [context, setContext] = useState<string[]>([]);
+
+  const [executionMessages, setExecutionMessages] = useState<string[]>([]);
+  const [executionChanges, setExecutionChanges] = useState<any[]>([]);
 
   const [messages, setMessages] = useState<Message[]>([]);
-
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [hidden, setHidden] = useState<boolean[]>(Array(1000).fill(false));
   
-  const [sources, setSources] = useState<any[]>([]);
-
-  const [allSnippets, setAllSnippets] = useState<Snippet[]>([]);
   const [directory, setDirectory] = useState("");
+  const [sources, setSources] = useState([]);
+
+  const [infoIterate, setInfoIterate] = useState(false);
 
   useEffect(() => {
     VSCodeMessage.onMessage((message) => {
-      // console.log("Received message: ", message)
+      console.log("Received message: ", message)
       let content = message.data.content;
       let type = message.data.type;
       console.log(content, type);
@@ -43,8 +51,11 @@ function App() {
           setLoading(false);
         }
       } else if (type == "snippet") {
-        setSnippets((existingArray) => [...existingArray, content]);
-        setAllSnippets((existingArray) => [...existingArray, content]);
+        let relativeFilepath = content.filepath.replace(directory, "")
+        let snippetText = `Filepath: ${relativeFilepath} \n \`\`\`${content.language} \n ${content.code} \n \`\`\``;
+
+        console.log("Received snippet with information: ", directory, relativeFilepath, snippetText, directory)
+        setContext([...context, snippetText]);
       } else if (type == "responseRequest") {
         requestUserResponse();
       } else if (type == "info") {
@@ -57,71 +68,111 @@ function App() {
     setLoading(false);
   }
 
-  let sendMessage = async (message: string, type: string) => {
-    let localMessages = [...messages];
+  let sendExecutorMessage = async () => {
+    setMessage("");
+    setLoading(true);
+    
     try {
-      let contextMessage = "CONTEXT \n";
-      if(snippets.length > 0){
-        contextMessage += "\n ### Code snippets: \n"
-        for(var i = 0; i < snippets.length; i++){
-          contextMessage += "Filepath: " + snippets[i].filepath + "\n\n";
-          contextMessage += "```" + snippets[i].language + "\n" + snippets[i].code + "\n```\n";
-        }
+      let response = await axios.post(`${serverUrl}/execute`, {
+        context: context,
+        plan: plan,
+        message: message,
+        directory: directory,
+      });
+      console.log("Received execution response from the backend: ", response)
+      if(response.statusText !== "OK"){
+        throw "Error";
       }
 
-      localMessages.push({
-        role: "user",
-        content: message
-      });
-      localMessages.push({
-        role: "user",
-        content: contextMessage
-      });
+      let messages = [];
+      let changes = [];
 
-      setMessage("");
-      setSnippets([]);
-      setLoading(true);
-
-      setMessages(localMessages);
-  
-      console.log("Sending message to backend.");
-      
-      let withoutHiddenMessages = [];
-      for(var i = 0; i < localMessages.length; i++){
-        if(!hidden[i]){
-          withoutHiddenMessages.push(localMessages[i]);
-        }
+      for(var i = 0; i < response.data.execution.length; i++){
+        if(response.data.execution[i].type == "message"){
+          console.log("Message: " , response.data.execution[i].content)
+          messages.push(response.data.execution[i].content);
+        } else if (response.data.execution[i].type == "changes") {
+          console.log("Change: ", response.data.execution[i].content);
+          changes.push(response.data.execution[i].content);
+        } 
       }
 
-      console.log("Sending message to backend: ", `http://127.0.0.1:8123/${type}`, {
-        "messages": withoutHiddenMessages,
-        "directory": directory
-      })
-
-      let result = await axios.post(`http://127.0.0.1:8123/${type}`, {
-        "messages": withoutHiddenMessages,
-        "directory": directory
-      }, {
-        headers: {
-          'Content-Type': "application/json;charset=UTF-8"
-        }
-      });
-
-      console.log("Result from retrieval attempt: ", result);
-      if(result.data){
-        localMessages = [...localMessages, ...result.data];
-      } else {
-        localMessages = [...localMessages,  {role: "assistant", content: "There was an error"}];
-      }
-  
-      setMessages(localMessages);
-      setLoading(false);
-    } catch(e) {
+      setExecutionChanges(changes);
+      setExecutionMessages(messages);
+    } catch (e) {
       console.error(e);
-      localMessages = [...localMessages, {role: 'assistant', content: "There was an error"}];
-      setMessages(localMessages)
-      setLoading(false);
+      toast("There was an error");
     }
+
+    setLoading(false);
+  }
+
+  let sendChatMessage = async (autoretrieveContext: boolean) => {
+    setMessage("");
+    setLoading(true);
+
+    try {
+      let response = await axios.post(`${serverUrl}/chat`, {
+        messages: messages,
+        context: context,
+        autoretrieveContext: autoretrieveContext
+      });
+      if (!response.data){
+        throw "Error";
+      }
+      setContext([...context, ...response.data.context]);
+      setMessages([...messages, response.data.answer]);
+    } catch (e) {
+      console.error(e);
+      toast("There was an error");
+    }
+
+    setLoading(false);
+  }
+
+  let sendInformationRetrievalMessage = async (query: string) => {
+    setMessage("");
+    setLoading(true);
+
+    try {
+      let response = await axios.post(`${serverUrl}/information`, {
+        objective: query,
+        context: context,
+        directory: directory
+      });
+      if(!response.data){
+        throw "Error";
+      }
+      setContext(response.data.context)
+    } catch (e) {
+      console.error(e);
+      toast("There was an error");
+    }
+
+    setLoading(false);
+  }
+
+  let sendPlanCreationRequest = async () => {
+    setLoading(true);
+
+    try {
+      let response = await axios.post(`${serverUrl}/plan`, {
+        objective: objective,
+        directory: directory,
+        context: context
+      });
+      if(!response.data){
+        throw "Error loading!";
+      }
+  
+      setPlan(response.data.plan)
+    } catch (e) {
+      console.error(e);
+      toast("There was an error");
+    }
+
+
+    setLoading(false);
   }
 
   let makeElementHidden = (index: number) => {
@@ -130,30 +181,19 @@ function App() {
     setHidden(tempHidden);
   }
 
-  let snippetsWithoutIndex = (arr: Snippet[], index: number) => {
+  let contextWithoutIndex = (arr: string[], index: number) => {
     if (index < 0 || index >= arr.length) {
       return arr;
     }
     return arr.filter((_, i) => i !== index);
   }
-  
-  let deleteSnippet = (index: number) => {
-    setSnippets((oldArray) => snippetsWithoutIndex(oldArray, index));
 
-    // find matching
-    let allSnippetsMatchingIndex = -1;
-    for(var i = 0; i < allSnippets.length; i++){
-      if(allSnippets[i].code === snippets[index].code){
-        allSnippetsMatchingIndex = i;
-        break;
-      }
-    }
-
-    setAllSnippets((oldArray) => snippetsWithoutIndex(oldArray, index));
+  let deleteContextElement = (index: number) => {
+    const newContext = contextWithoutIndex(context, index);
+    setContext(newContext);
   }
 
   let getSources = async () => {}
-
 
   let resetMessages = async () => {
     setMessages([]);
@@ -163,7 +203,7 @@ function App() {
   let loadVectorstore = async () => {
     setLoading(true);
     try {
-      await axios.post("http://127.0.0.1:8123/load_vectorstore", {
+      await axios.post(`${serverUrl}/load_vectorstore`, {
         "directory": directory
       },  {
         headers: {
@@ -172,6 +212,7 @@ function App() {
       });
     } catch (e) {
       console.error(e);
+      toast("There was an error");
     }
     setLoading(false);
   }
@@ -183,60 +224,85 @@ function App() {
           <Tabs.Tab value="chat">Chat</Tabs.Tab>
           {/* <Tabs.Tab value="sources">Sources</Tabs.Tab> */}
         </Tabs.List>
-      
+
         <Tabs.Panel value="chat">
           <Box m="lg">
-            <Text>Currently in directory: {directory}</Text>
+            <Text>Currently in directory:</Text>
+            <TextInput onChange={(e) => setDirectory(e.target.value)} value={directory} m={2} placeholder="Your directory should automatically load here. Edit it to be in the correct git directory."></TextInput>
+
+            <Textarea placeholder="State your objective" onChange={(e) => setObjective(e.target.value)} value={objective}/>
 
             {messages.length > 0 && <Button variant="filled" onClick={() => resetMessages()}>Reset conversation</Button>}
             <Button variant="outline" onClick={() => loadVectorstore()}>Load vectorstore</Button>
-
-            {messages.map((item, index) => (
-                <Card shadow="sm" m={4} key={index}>
-                  <ScrollArea>
-                    {(item.content) && <EnhancedMarkdown message={item} hidden={hidden[index]} unhide={() => makeElementHidden(index)}/>}
-                  </ScrollArea>
-                </Card>
-              ))}
-
-            
-            <Text m="sm" size="xs">Press Enter to send and Shift-Enter for newline.</Text>
-            <Textarea placeholder="Provide feedback" disabled={loading} value={message} onChange={(e) => setMessage(e.target.value)}/>
-            
-            <Box>
-              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "information")}>➡️ Load Further Context</Button>
-              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "plan")}>➡️ Create Plan</Button>
-              <Button variant="outline" size="xs" disabled={loading} onClick={() => sendMessage(message, "execute")}>➡️ Implement Instructions</Button>
-            </Box>
-
-            {snippets.map((item, index) => (
-              <Card shadow="sm" key={index}>
-                <ScrollArea>
-                  <Text>Filepath: {item.filepath}</Text>
-                  <SyntaxHighlighter language={item.language} style={dark}>
-                    {item.code}
-                  </SyntaxHighlighter>
-                </ScrollArea>
-                <Button variant="outline" onClick={() => deleteSnippet(index)}>Delete</Button>
-              </Card>
-            ))}
-
-          </Box>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="sources">
-          <Box m="lg">
-            <Button disabled={loading} onClick={() => getSources()} m="sm">Check sources</Button>
-            <Button disabled={loading} onClick={() => loadVectorstore()} m="sm">Load/reload local codebase</Button>
-
             {loading && <Loader/>}
-          
-            {sources.map((item, index) => (
-              <ReactJson theme="hopscotch" src={item} collapsed={true}/>
-            ))}
+
+            <Accordion defaultValue="information" value={mode} onChange={setMode}>
+              <Accordion.Item key="information" value="information">
+                <Accordion.Control>🔎 information</Accordion.Control>
+                <Accordion.Panel>
+                  <Button onClick={() => setContext([])}>Clear Context</Button>
+                  <Button onClick={() => sendInformationRetrievalMessage(objective ? objective : "")}>Retrieve Context from Objective</Button>
+
+                  {context?.map((item, index) => (
+                    <Paper mt="lg"
+                      shadow="sm"
+                      p="sm"
+                      radius="sm">
+                      <Box>
+                        <Badge onClick={() => makeElementHidden(index)} color={hidden[index] ? "gray" : "blue"}>{hidden[index] ? "Unhide" : "Hide"} Source</Badge>
+                        <Badge onClick={() => deleteContextElement(index)}>Delete Source</Badge>
+                      </Box>
+                      <EnhancedMarkdown message={{role: "context", content: item}}/>
+                    </Paper>
+                  ))}
+
+                </Accordion.Panel>
+              </Accordion.Item>
+              <Accordion.Item key="plan" value="plan">
+                <Accordion.Control>📋 plan</Accordion.Control>
+                <Accordion.Panel>
+                  <Textarea placeholder="The plan will be here and you can edit it" value={plan} onChange={(e) => setPlan(e.target.value)} rows={10}/>
+              
+
+                  <Button onClick={() => sendPlanCreationRequest()}>Create Plan from context and objective</Button>
+                </Accordion.Panel>
+              </Accordion.Item>
+              <Accordion.Item key="execution" value="execution">
+                <Accordion.Control>📝 execution</Accordion.Control>
+                <Accordion.Panel>
+                  {executionChanges.length}
+                  {executionChanges.map((item, index) => (
+                    <Box key={index}>
+                      {/* <Text>{JSON.stringify(item)}</Text> */}
+                      <Badge size="xl" variant="gradient">{item.old.length > 0 ? "Replacement" : "Write"}</Badge>
+                      <Text style={{fontWeight: 'bold'}}>Filepath: {item.filepath}</Text>
+                      <ReactDiffViewer oldValue={item.old} newValue={item.new}></ReactDiffViewer>
+                      {item.old.length > 0 && <Button onClick={() => VSCodeMessage.postMessage({type: "replaceSnippet", content: {originalCode: item.old, newCode: item.new, filepath: item.filepath}})}>Make Replacement</Button>}
+                      {item.old.length == 0 && <Button onClick={() => VSCodeMessage.postMessage({type: "writeFile", content: {newCode: item.new, filepath: item.filepath}})}>Write to File</Button>}
+                    </Box>
+                  ))}
+                  {executionMessages.map((item, index) => (
+                    <Box key={index}>
+                      <EnhancedMarkdown message={{role: "executor", content: item}}/>
+                    </Box>
+                  ))}
+                  <Button onClick={() => sendExecutorMessage()}>Create execution based on plan</Button>
+                </Accordion.Panel>
+              </Accordion.Item>
+              <Accordion.Item key="chat" value="chat">
+                <Accordion.Control>💬 chat</Accordion.Control>
+                <Accordion.Panel>
+                  {messages.map((item, index) => (
+                    <EnhancedMarkdown message={item}/>
+                  ))}
+                  <Button onClick={() => sendChatMessage(true)}>Send message + retrieve context</Button>
+                  <Button onClick={() => sendChatMessage(false)}>Send message with existing context</Button>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+
           </Box>
         </Tabs.Panel>
-
       </Tabs>
 
       {/* <Text>{JSON.stringify(snippets)}</Text> */}

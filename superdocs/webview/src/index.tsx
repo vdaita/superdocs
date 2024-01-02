@@ -1,5 +1,9 @@
 import '@mantine/core/styles.css';
+// import '@mantine/notifications/styles.css';
 import { MantineProvider } from '@mantine/core';
+// import { Notifications } from '@mantine/notifications';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css'; 
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
@@ -14,6 +18,7 @@ root.render(
   // <React.StrictMode>
     <MantineProvider defaultColorScheme="dark">
       <App />
+      <ToastContainer/>
     </MantineProvider>
   // </React.StrictMode>
 );

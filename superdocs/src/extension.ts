@@ -75,7 +75,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			if(data.type == "replaceSnippet"){
 				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
 			} else if (data.type == "writeFile") {
-				writeToFile(data.content.text, data.content.filepath);
+				writeToFile(data.content.newCode, data.content.filepath);
 			} else if (data.type == "sendTerminal") {
 
 			} else if (data.type === "saveCurrent") {

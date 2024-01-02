@@ -419,19 +419,19 @@ def solve_problem():
 
     solve_messages.append({"role": "assistant", "content": f"Plan to implement: \n {plan}"})
 
-    # response = openai_client.chat.completions.create(
-    #     model=model_name,
-    #     messages=solve_messages,
-    #     max_tokens=1536,
-    #     temperature=model_temperature
-    # )
+    response = openai_client.chat.completions.create(
+        model=model_name,
+        messages=solve_messages,
+        max_tokens=1536,
+        temperature=model_temperature
+    )
 
     return_messages = []
 
-    # print("Received response: ", response)
-    # response_message = response.choices[0].message.content
+    print("Received response: ", response)
+    response_message = response.choices[0].message.content
 
-    response_message = test_response
+    # response_message = test_response
     code_blocks = extract_diff_code_blocks(response_message)
 
     print("\n")

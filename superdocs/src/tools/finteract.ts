@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 
 export async function replaceTextInFile(searchBlock: string, replacementBlock: string, filePath: string) {
   try {
-    let fullpath = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, filePath);
+    let fullpath = filePath;
 
     // Read the contents of the file
     let data = await fs.promises.readFile(fullpath, 'utf8');
@@ -21,12 +21,27 @@ export async function replaceTextInFile(searchBlock: string, replacementBlock: s
   }
 }
 
-export async function writeToFile(text: string, filePath: string){
+export async function writeToFile(data: string, filePath: string) {
   try {
-    let fullpath = path.join(vscode.workspace.workspaceFolders![0].uri.fsPath, filePath);
-    await fs.promises.writeFile(fullpath, text, 'utf-8');
-    console.log("File updated successfully");
+    // Split the file path into directory and filename
+    let splitPath = filePath.split('/');
+    let fileName = splitPath.pop();
+    let dirPath = splitPath.join('/');
+
+    // Create directory if it doesn't exist
+    if (!fs.existsSync(dirPath)){
+        fs.mkdirSync(dirPath, { recursive: true });
+    }
+
+    if(!fileName){
+      throw "fileName is empty in writeToFile";
+    }
+
+    // Write data to file
+    await fs.promises.writeFile(filePath, data, 'utf8');
+
+    console.log(`Data written to ${fileName}`);
   } catch (err) {
-    console.error('Error occurred: ', err);
+    console.error("Error occurred: ", err);
   }
 }

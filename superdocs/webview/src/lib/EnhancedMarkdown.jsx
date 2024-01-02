@@ -9,7 +9,7 @@ import { VSCodeMessage } from './VSCodeMessage'
 import ReactDiffViewer from 'react-diff-viewer';
 import {CopyToClipboard} from 'react-copy-to-clipboard';
 
-export default function EnhancedMarkdown({ message, hidden, unhide }) {
+export default function EnhancedMarkdown({ message }) {
 
     
 
@@ -38,9 +38,15 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
         })
     }
 
+    console.log("Received message in EnhancedMarkdown: ", message);
+
+    if(!message.content){
+        return (<>Empty message</>)
+    }
+
     if(message.content.startsWith("REPLACEMENT")) {
         const parsedContent = JSON.parse(message.content.replace("REPLACEMENT\n", "").trim())
-
+        console.log("parsedContent: ", parsedContent)
         return (
             <>
                 <Badge
@@ -48,11 +54,11 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
                     variant="gradient"
                     gradient={message["role"] ? { from: 'blue', to: 'cyan', deg: 90 } : {from: 'red', to: 'orange', deg: 90}}
                 >
-                    Assistant: Text Replacement
+                    Assistant: {parsedContent["originalText"].length > 0 ? "Replacement" : "Write"}
                 </Badge>
                 <Text style={{fontWeight: "bold"}}>Filepath: {parsedContent["filepath"]}</Text>
-                <ReactDiffViewer oldValue={parsedContent["original_text"]} newValue={parsedContent["new_text"]}/>
-                <Button onClick={() => sendReplace(parsedContent["filepath"], parsedContent["original_text"], parsedContent["new_text"])}>Replace</Button>
+                <ReactDiffViewer oldValue={parsedContent["originalText"]} newValue={parsedContent["newText"]}/>
+                <Button onClick={() => parsedContent["originalText"].length > 0 ? sendReplace(parsedContent["filepath"], parsedContent["originalText"], parsedContent["newText"]) : sendWrite(parsedContent["filepath"], parsedContent["newText"])}>Replace</Button>
             </>
         )
     }
@@ -68,13 +74,6 @@ export default function EnhancedMarkdown({ message, hidden, unhide }) {
             {message["role"]}
             </Badge>
             
-            <Badge
-                size="md"
-                color={hidden ? "gray": "blue"}
-                onClick={unhide}
-            >
-                {hidden ? "Click to unhide" : "Click to hide"}
-            </Badge>
 
             <details>
                 <summary>{message["content"].split("\n")[0]}</summary>
