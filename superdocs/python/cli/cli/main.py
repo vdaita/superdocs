@@ -18,7 +18,7 @@ import logging
 import re
 from googlesearch import search
 from trafilatura import fetch_url, extract
-from FlagEmbedding import FlagModel
+import typer
 
 import prompts
 
@@ -42,15 +42,15 @@ load_dotenv()
 # model_temperature=0.1
 
 ## OpenAI
-openai_client = OpenAI(
-    api_key=os.environ["OPENAI_API_KEY"]
-)
+openai_client = None
 model_name = "gpt-4-1106-preview"
 model_temperature=0.1
 
 test_response = """
 ```diff\n--- /dev/null\n+++ src/pages/api/openai.ts\n@@ ... @@\n+import { NextApiRequest, NextApiResponse } from 'next';\n+import OpenAI from 'openai-api';\n+\n+// Initialize OpenAI with your API Key\n+const openai = new OpenAI(process.env.OPENAI_API_KEY);\n+\n+// Async function to get a response from OpenAI\n+async function getOpenAIResponse(prompt: string) {\n+  const response = await openai.complete({\n+    engine: 'davinci',\n+    prompt: prompt,\n+    maxTokens: 150,\n+    temperature: 0.7,\n+    topP: 1,\n+    frequencyPenalty: 0,\n+    presencePenalty: 0,\n+  });\n+  return response.data.choices[0].text.trim();\n+}\n+\n+// API route to handle requests\n+export default async (req: NextApiRequest, res: NextApiResponse) => {\n+  if (req.method === 'POST') {\n+    const { prompt } = req.body;\n+    try {\n+      const openAIResponse = await getOpenAIResponse(prompt);\n+      res.status(200).json({ result: openAIResponse });\n+    } catch (error) {\n+      res.status(500).json({ error: 'Error fetching response from OpenAI' });\n+    }\n+  } else {\n+    res.setHeader('Allow', ['POST']);\n+    res.status(405).end(`Method ${req.method} Not Allowed`);\n+  }\n+};\n```\n\n```diff\n--- src/components/FormulaAssistant.tsx\n+++ src/components/FormulaAssistant.tsx\n@@ ... @@\n export default function FormulaAssistant() {\n   const [query, setQuery] = useState('');\n   const [software, setSoftware] = useState('excel');\n   const [result, setResult] = useState('');\n \n   const process = async () => {\n-    // TODO: Implement the call to the OpenAI API\n+    try {\n+      const response = await fetch('/api/openai', {\n+        method: 'POST',\n+        headers: {\n+          'Content-Type': 'application/json',\n+        },\n+        body: JSON.stringify({ prompt: `${query} in ${software}` }),\n+      });\n+      if (!response.ok) {\n+        throw new Error('Network response was not ok');\n+      }\n+      const data = await response.json();\n+      setResult(data.result);\n+    } catch (error) {\n+      console.error('There was an error processing the request', error);\n+    }\n   };\n \n   // Rest of the component remains unchanged\n }\n```\n\nPlease ensure that you have the `openai-api` package installed in your project and that you have set the `OPENAI_API_KEY` in your environment variables for the above code to work correctly.
 """
+
+typer_app = typer.Typer()
 
 app = Flask(__name__)
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
@@ -121,36 +121,18 @@ def self_evaluated_gpt(task, query, previous_response=None, iterations=3):
     pass
 
 def get_retrieval_tools(directory):
-    def combined_codebase_search(args): # WIP
-        query = args["query"]
-
-        if db["vectorstore"]:
-            model = FlagModel(
-                'BAAI/bge-base-en-v1.5',
-                use_fp16=True
-            )
-
-            documents = db["vectorstore"].get()
-            retriever = BM25Retriever.from_documents(documents)
-            retriever.k = 25
-            semantic_docs = db["vectorstore"].similarity_search(query, k=25)
-            lexical_docs = retriever.get_relevant_documents(query)
-            # Rerank and find top 7 documents
-            embedded_query = model.encode_queries([query])
-            embedded_docs = model.encode([doc.page_content for doc in lexical_docs])
-            embedded_docs.append([f"From source: {doc.metadata['source']} \n {doc.page_content}" for doc in semantic_docs])
-
-            scores = embedded_query @ embedded_docs
-
-
-        return "Codebase search has not been enabled since the store is unloaded."
+    global perplexity_model
 
     def external_search(args):
         query = args["query"]
-        # return f"Query: {query} \n \n Response: Test Perplexity Response"
-        model_response = perplexity_model([HumanMessage(content=query)]).content
-        print("Perplexity model response: ", query, model_response)
-        return f"Query: {query} \n \n Response: {model_response}"
+        
+        if perplexity_model:
+            # return f"Query: {query} \n \n Response: Test Perplexity Response"
+            model_response = perplexity_model([HumanMessage(content=query)]).content
+            print("Perplexity model response: ", query, model_response)
+            return f"Query: {query} \n \n Response: {model_response}"
+        else:
+            return "External search using Perplexity LLM is currently disabled."
     def read_file(args):
         filepath = args["query"]
         closest_filepath = find_closest_file(directory, filepath)
@@ -303,6 +285,30 @@ def extract_information_from_query(query: str, existing_content: list, directory
         
 #     return context
 
+@app.post("/define_models")
+def define_models():
+    global openai_client
+    global perplexity_model
+    global model_name
+
+    data = request.get_json()
+    openai_client = OpenAI(
+        api_key=data["apiKey"],
+        base_url=data["apiUrl"]
+    )
+    model_name = data["modelName"]
+
+    if data["perplexityApiKey"]:
+        perplexity_model = perplexity_model = ChatOpenAI(
+            model_name="pplx-70b-online",
+            openai_api_key=data["perplexityApiKey"],
+            openai_api_base="https://api.perplexity.ai",
+            max_tokens=800
+        )
+    else: 
+        perplexity_model = None
+
+
 @app.post("/load_vectorstore")
 def load_vectorstore():
     data = request.get_json()
@@ -450,3 +456,7 @@ def solve_problem():
     print("Returning messages: ", return_messages)
     
     return {"execution": return_messages}
+
+@typer_app.command()
+def start():
+    app.run(port=8321, debug=True)
