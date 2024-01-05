@@ -1,0 +1,14 @@
+README.md
+setup.py
+./superdocs-cli/__main__.py
+superdocs-cli/__main__.py
+superdocs-cli/diff_management.py
+superdocs-cli/prompts.py
+superdocs-cli/repo.py
+superdocs-cli/search_retrieval.py
+superdocs_cli.egg-info/PKG-INFO
+superdocs_cli.egg-info/SOURCES.txt
+superdocs_cli.egg-info/dependency_links.txt
+superdocs_cli.egg-info/not-zip-safe
+superdocs_cli.egg-info/requires.txt
+superdocs_cli.egg-info/top_level.txt

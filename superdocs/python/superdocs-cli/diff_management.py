@@ -1,6 +1,6 @@
 from thefuzz import fuzz
 import re
-from repo import find_closest_file
+from .repo import find_closest_file
 from unidiff import PatchSet
 import json
 import os

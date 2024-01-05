@@ -2,11 +2,10 @@ from flask import request
 from langchain.chat_models import ChatOpenAI
 from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.retrievers import BM25Retriever
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from repo import list_non_ignored_files, find_closest_file, get_documents
+from .repo import list_non_ignored_files, find_closest_file, get_documents
 from langchain.tools import format_tool_to_openai_function
-import diff_management
+from .diff_management import fuzzy_process_diff
 from ripgrepy import Ripgrepy
 from openai import OpenAI
 import json
@@ -18,9 +17,8 @@ import logging
 import re
 from googlesearch import search
 from trafilatura import fetch_url, extract
-import typer
 
-import prompts
+from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 
 load_dotenv()
 
@@ -50,21 +48,12 @@ test_response = """
 ```diff\n--- /dev/null\n+++ src/pages/api/openai.ts\n@@ ... @@\n+import { NextApiRequest, NextApiResponse } from 'next';\n+import OpenAI from 'openai-api';\n+\n+// Initialize OpenAI with your API Key\n+const openai = new OpenAI(process.env.OPENAI_API_KEY);\n+\n+// Async function to get a response from OpenAI\n+async function getOpenAIResponse(prompt: string) {\n+  const response = await openai.complete({\n+    engine: 'davinci',\n+    prompt: prompt,\n+    maxTokens: 150,\n+    temperature: 0.7,\n+    topP: 1,\n+    frequencyPenalty: 0,\n+    presencePenalty: 0,\n+  });\n+  return response.data.choices[0].text.trim();\n+}\n+\n+// API route to handle requests\n+export default async (req: NextApiRequest, res: NextApiResponse) => {\n+  if (req.method === 'POST') {\n+    const { prompt } = req.body;\n+    try {\n+      const openAIResponse = await getOpenAIResponse(prompt);\n+      res.status(200).json({ result: openAIResponse });\n+    } catch (error) {\n+      res.status(500).json({ error: 'Error fetching response from OpenAI' });\n+    }\n+  } else {\n+    res.setHeader('Allow', ['POST']);\n+    res.status(405).end(`Method ${req.method} Not Allowed`);\n+  }\n+};\n```\n\n```diff\n--- src/components/FormulaAssistant.tsx\n+++ src/components/FormulaAssistant.tsx\n@@ ... @@\n export default function FormulaAssistant() {\n   const [query, setQuery] = useState('');\n   const [software, setSoftware] = useState('excel');\n   const [result, setResult] = useState('');\n \n   const process = async () => {\n-    // TODO: Implement the call to the OpenAI API\n+    try {\n+      const response = await fetch('/api/openai', {\n+        method: 'POST',\n+        headers: {\n+          'Content-Type': 'application/json',\n+        },\n+        body: JSON.stringify({ prompt: `${query} in ${software}` }),\n+      });\n+      if (!response.ok) {\n+        throw new Error('Network response was not ok');\n+      }\n+      const data = await response.json();\n+      setResult(data.result);\n+    } catch (error) {\n+      console.error('There was an error processing the request', error);\n+    }\n   };\n \n   // Rest of the component remains unchanged\n }\n```\n\nPlease ensure that you have the `openai-api` package installed in your project and that you have set the `OPENAI_API_KEY` in your environment variables for the above code to work correctly.
 """
 
-typer_app = typer.Typer()
-
 app = Flask(__name__)
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
 logging.getLogger('flask_cors').level = logging.DEBUG
 
-
 embeddings = HuggingFaceEmbeddings(model_name="TaylorAI/bge-micro-v2")
-perplexity_model = ChatOpenAI(
-    model_name="pplx-70b-online",
-    openai_api_key=os.environ["PERPLEXITY_API_KEY"],
-    openai_api_base="https://api.perplexity.ai",
-    max_tokens=800
-)
-
+perplexity_model = None
 db = {
     "vectorstore": None,
     "directory": None
@@ -189,7 +178,7 @@ def extract_information_from_query(query: str, existing_content: list, directory
     messages = [
         {
             "role": "system",
-            "content": prompts.INFORMATION_EXTRACTION_SYSTEM_PROMPT
+            "content": INFORMATION_EXTRACTION_SYSTEM_PROMPT
         },
         {
             "role": "user",
@@ -243,7 +232,7 @@ def extract_information_from_query(query: str, existing_content: list, directory
 #     # Add all relevant information relating to adding context
 #     context = existing_context
 
-#     prompt_order = [prompts.EXTERNAL_SEARCH_PROMPT, prompts.SEMANTIC_SEARCH_PROMPT, prompts.LEXICAL_SEARCH_PROMPT, prompts.FILE_READ_PROMPT]
+#     prompt_order = [EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT]
 #     tool_names, tool_functions = get_retrieval_tools(directory)
 
 #     for index, system_prompt in enumerate(prompt_order):
@@ -255,7 +244,7 @@ def extract_information_from_query(query: str, existing_content: list, directory
 #         Objective: {query}
 #         """
 
-#         if system_prompt == prompts.FILE_READ_PROMPT:
+#         if system_prompt == FILE_READ_PROMPT:
 #             context_message = f"User's current files: \n {list_non_ignored_files(directory)}" + context_message
 #         messages = [
 #             {
@@ -342,7 +331,7 @@ def break_down_problem():
     print("Received: ", data)
 
     plan_changes_messages = [
-        {"role": "system", "content": prompts.PLANNING_SYSTEM_PROMPT},
+        {"role": "system", "content": PLANNING_SYSTEM_PROMPT},
     ]
     for context_item in context:
         plan_changes_messages.append({
@@ -378,7 +367,7 @@ def chat():
     condense_query_response = openai_client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n {prompts.CONDENSE_QUERY_PROMPT}: {current_question}"}
+            {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n {CONDENSE_QUERY_PROMPT}: {current_question}"}
         ],
         temperature=model_temperature,
         max_tokens=200
@@ -389,7 +378,7 @@ def chat():
     contextual_answer_response = openai_client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": prompts.QA_PROMPT}
+            {"role": "system", "content": QA_PROMPT}
         ],
         temperature=model_temperature,
         max_tokens=300
@@ -416,8 +405,8 @@ def solve_problem():
     context = "\n".join(context)
 
     solve_messages = [
-        {"role": "system", "content": prompts.EXECUTOR_SYSTEM_PROMPTS},
-        {"role": "system", "content": prompts.EXECUTOR_SYSTEM_REMINDER},
+        {"role": "system", "content": EXECUTOR_SYSTEM_PROMPTS},
+        {"role": "system", "content": EXECUTOR_SYSTEM_REMINDER},
     ]
 
     for context_message in context:
@@ -445,7 +434,7 @@ def solve_problem():
 
     replacements = []
     for code_block in code_blocks:
-        replacements.extend(diff_management.fuzzy_process_diff(directory, code_block))
+        replacements.extend(fuzzy_process_diff(directory, code_block))
     
     for replacement in replacements:
         return_messages.append({
@@ -457,6 +446,12 @@ def solve_problem():
     
     return {"execution": return_messages}
 
-@typer_app.command()
-def start():
-    app.run(port=8321, debug=True)
+def start_server():
+    app.run(port=8123, debug=True)
+
+if __name__ == "__main__":
+    start_server()
+
+
+# if __name__ == "__main__":
+#     typer.run(run)
