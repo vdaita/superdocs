@@ -1,12 +1,7 @@
 from flask import request
-from langchain.chat_models import ChatOpenAI
-from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from .repo import list_non_ignored_files, find_closest_file, get_documents
-from langchain.tools import format_tool_to_openai_function
 from .diff_management import fuzzy_process_diff
-from ripgrepy import Ripgrepy
 from openai import OpenAI
 import json
 from dotenv import load_dotenv
@@ -18,7 +13,14 @@ import re
 from googlesearch import search
 from trafilatura import fetch_url, extract
 
+from llama_index.vector_stores import ChromaVectorStore
+from llama_index.retrievers import BM25Retriever
+from llama_index import VectorStoreIndex, StorageContext, ServiceContext, QueryBundle
+from llama_index.postprocessor import SentenceTransformerRerank
+
 from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
+from .hybrid_retriever import HybridRetriever
+from .search_retrieval import retrieve_content
 
 load_dotenv()
 
@@ -41,7 +43,12 @@ load_dotenv()
 
 ## OpenAI
 openai_client = None
+
+api_key = ""
+base_url = ""
 model_name = "gpt-4-1106-preview"
+auxiliary_model_name = ""
+
 model_temperature=0.1
 
 test_response = """
@@ -53,11 +60,14 @@ cors = CORS(app, resources={r"/*": {"origins": "*"}})
 logging.getLogger('flask_cors').level = logging.DEBUG
 
 embeddings = HuggingFaceEmbeddings(model_name="TaylorAI/bge-micro-v2")
-perplexity_model = None
 db = {
-    "vectorstore": None,
-    "directory": None
+    "vectorstore_index": None,
+    "retriever": None,
+    "directory": None,
+    "hybrid_retriever": None
 }
+
+reranker = SentenceTransformerRerank(top_n=8, model="BAAI/bge-reranker-base")
 
 def chunk_text_with_overlap(text, chunk_size, overlap):
     """
@@ -110,18 +120,20 @@ def self_evaluated_gpt(task, query, previous_response=None, iterations=3):
     pass
 
 def get_retrieval_tools(directory):
-    global perplexity_model
-
+    def combined_search(args):
+        query = args["query"]
+        nodes = db["hybrid_retriever"].retrieve(query)
+        reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle=QueryBundle(
+            query
+        ))    
+        response = ""
+        for index, node in enumerate(reranked_nodes):
+            response += f"Snippet {index}: {node.get_text()} \n \n"
+        return response    
     def external_search(args):
         query = args["query"]
-        
-        if perplexity_model:
-            # return f"Query: {query} \n \n Response: Test Perplexity Response"
-            model_response = perplexity_model([HumanMessage(content=query)]).content
-            print("Perplexity model response: ", query, model_response)
-            return f"Query: {query} \n \n Response: {model_response}"
-        else:
-            return "External search using Perplexity LLM is currently disabled."
+        return retrieve_content(query, api_key, base_url, auxiliary_model_name)
+    
     def read_file(args):
         filepath = args["query"]
         closest_filepath = find_closest_file(directory, filepath)
@@ -131,30 +143,10 @@ def get_retrieval_tools(directory):
         contents = file.read()
         file.close()
         return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
-    def semantic_search(args):
-        try:
-            global db
-            if db["vectorstore"]:
-                query = args["query"]
-                docs = db["vectorstore"].similarity_search(query)
-                snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: ``\n{doc.page_content}\n``` \n ------" for doc in docs])
-                return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
-            return "Semantic search has been disabled."
-        except Exception:
-            return "Semantic search has been disabled."
-    def lexical_search(args):
-        """Accepts regular expression search query and searches for all instances of it."""
-        query = args["query"]
-        rg = Ripgrepy(query, directory)
-        searched_content = rg.H().n().run().as_string
-        if len(searched_content) > 1200:
-            return "Too many instances"
-        return f"File lexical search: {query} \n \n Retrieved content: {searched_content}"
     return {
         "external": external_search,
         "file": read_file,
-        "semantic": semantic_search,
-        "lexical": lexical_search
+        "combined_search": combined_search
     }
     # return ['external', 'semantic', 'lexical', 'file'], [external_search, semantic_search, lexical_search, read_file]
 
@@ -224,61 +216,13 @@ def extract_information_from_query(query: str, existing_content: list, directory
 
     return context
 
-    
-
-# def extract_information_from_query(query: str, existing_context: list, directory: str):
-#     print("Extract information from query: ", query, directory)
-#     global db
-#     # Add all relevant information relating to adding context
-#     context = existing_context
-
-#     prompt_order = [EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT]
-#     tool_names, tool_functions = get_retrieval_tools(directory)
-
-#     for index, system_prompt in enumerate(prompt_order):
-#         context_string = "\n".join(context)
-#         context_message = f"""
-#         Existing context:
-#         {context_string}
-#         \n \n
-#         Objective: {query}
-#         """
-
-#         if system_prompt == FILE_READ_PROMPT:
-#             context_message = f"User's current files: \n {list_non_ignored_files(directory)}" + context_message
-#         messages = [
-#             {
-#                 "role": "system",
-#                 "content": system_prompt
-#             },
-#             {
-#                 "role": "user",
-#                 "content": context_message
-#             }
-#         ]
-
-#         print("Sending messages: ", json.dumps(messages, indent=4))
-        
-#         response = openai_client.chat.completions.create(
-#             model=model_name,
-#             messages=messages,
-#             max_tokens=512
-#         )
-#         response_message = response.choices[0].message.content
-#         extractions = extract_content(response_message, tool_names[index])
-#         for extraction in extractions:
-#             extracted_content = tool_functions[index]({
-#                 "query": extraction
-#             })
-#             existing_context += f"\n {extracted_content}"
-        
-#     return context
-
 @app.post("/define_models")
 def define_models():
     global openai_client
-    global perplexity_model
     global model_name
+    global auxiliary_model_name
+    global base_url
+    global api_key
 
     data = request.get_json()
     openai_client = OpenAI(
@@ -286,16 +230,9 @@ def define_models():
         base_url=data["apiUrl"]
     )
     model_name = data["modelName"]
-
-    if data["perplexityApiKey"]:
-        perplexity_model = perplexity_model = ChatOpenAI(
-            model_name="pplx-70b-online",
-            openai_api_key=data["perplexityApiKey"],
-            openai_api_base="https://api.perplexity.ai",
-            max_tokens=800
-        )
-    else: 
-        perplexity_model = None
+    auxiliary_model_name = data["auxiliaryModelName"]
+    base_url = data["apiUrl"]
+    api_key = data["apiKey"]
 
 
 @app.post("/load_vectorstore")
@@ -305,7 +242,16 @@ def load_vectorstore():
     print("Loading the vectorstore....")
     documents = get_documents(directory)
     print("Got the documents...")
-    db["vectorstore"] = Chroma.from_documents(documents, embeddings)
+
+    storage_context = StorageContext.from_defaults()
+
+    db["vectorstore"] = VectorStoreIndex(
+        documents,
+        storage_context=storage_context,
+    )
+    db["retriever"] = BM25Retriever.from_defaults(nodes=documents, similarity_top_k=20)
+    db["hybrid_retriever"] = HybridRetriever(db["vectorstore"].as_retriever(similarity_top_k=20), db["retriever"])
+
     db["directory"] = directory
     return {"ok": True}
 

@@ -1,20 +1,14 @@
 from git import Repo
-from langchain.document_loaders import GitLoader
-from langchain.document_loaders.generic import GenericLoader
-from langchain.document_loaders.parsers import LanguageParser
 import os
-from langchain.text_splitter import Language, RecursiveCharacterTextSplitter
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, AIMessage, SystemMessage, Document
-from langchain.prompts import PromptTemplate
-from langchain.utils.openai_functions import convert_pydantic_to_openai_function
 from dotenv import load_dotenv
 import json
 import time
 from pydantic import BaseModel, Field
 import subprocess
 from thefuzz import process, fuzz
-
+from llama_index.node_parser import CodeSplitter
+from llama_index.schema import Node
+ 
 def find_closest_file(directory, filepath, threshold=95):
     files = list_non_ignored_files(directory)
     closest_match = process.extractOne(filepath, files, scorer=fuzz.token_sort_ratio)
@@ -45,53 +39,44 @@ def list_non_ignored_files(directory):
 
 def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parser_threshold=1000):
     files = list_non_ignored_files(directory)
-    code_suffixes = ["py", "js", "jsx", "tsx", "ts", "cc", "hpp", "cpp", "rb"] # make a better list
+    code_suffixes = ["py", "js", "jsx", "tsx", "ts", "cc", ".hpp", ".cpp", ".c", ".rb"] # make a better list
     language_map = {
-        "py": Language.PYTHON,
-        "js": Language.JS,
-        "java": Language.JAVA,
-        "ts": Language.TS,
-        "tsx": Language.TS,
-        "js": Language.JS,
-        "jsx": Language.JS,
-        "cc": Language.CPP,
-        "hpp": Language.CPP,
-        "cpp": Language.CPP,
-        "rb": Language.RUBY
+        "py": "python",
+        "js": "javascript",
+        "java": "java",
+        "ts": "typescript",
+        "tsx": "typescript",
+        "jsx": "javascript",
+        "cc": "cpp",
+        "hpp": "cpp",
+        "cpp": "cpp",
+        "rb": "ruby"
     }
+
 
     all_docs = []
 
+    print("Going into the for loop")
+
     for rfilepath in files:
         ext = rfilepath.split(".")[-1]
+        print("Processing filepath: ", rfilepath, ext, ext in code_suffixes)
         if ext in code_suffixes:
+            print("         Code suffixes work")
             filepath = os.path.join(directory, rfilepath)
             print("Loading: ", filepath)
             file = open(filepath, "r")
             contents = file.read()
             file.close()      
+            
+            code_splitter = CodeSplitter(language=language_map[ext])
+            split_text = code_splitter.split_text(contents)
 
-            splitter = RecursiveCharacterTextSplitter.from_language(
-                language=language_map[ext],
-                chunk_size=250,
-                chunk_overlap=20
-            )
-
-            original_doc = Document(
-                page_content=contents,
-                metadata={
-                    "source": filepath,
-                    "last_modified": time.time()
-                }
-            )
-
-            docs = splitter.split_documents([original_doc])
-
-            all_docs.extend(docs)
+            all_docs.extend(Node(text=f"Filename: {rfilepath} \n Content: {text}") for text in split_text)
             print("Finished.")
    
     return all_docs
 
 if __name__ == "__main__":
     print("Main")
-    print(get_documents("/Users/vijaydaita/Files/uiuc/rxassist/rxassist/"))
+    # print(get_documents("/Users/vijaydaita/Files/uiuc/rxassist/rxassist/"))
