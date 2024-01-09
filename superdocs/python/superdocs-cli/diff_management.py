@@ -1,6 +1,6 @@
 from thefuzz import fuzz
 import re
-from repo import find_closest_file
+from .repo import find_closest_file
 from unidiff import PatchSet
 import json
 import os
@@ -113,7 +113,7 @@ def parse_diff(diff_string):
             pass
         elif line.startswith("-"):
             if not(line.startswith("---")):
-                current_to_remove += line[1:].strip() + "\n"
+                current_to_remove += line[1:] + "\n"
             if previous_symbol == "+":
                 # save the prevous chunk that was created
                 changes.append({
@@ -125,11 +125,11 @@ def parse_diff(diff_string):
                 current_to_write = ""
             previous_symbol = "-"
         elif line.startswith("+"):
-            current_to_write += line[1:].strip() + "\n"
+            current_to_write += line[1:] + "\n"
             previous_symbol = "+"
         else:
-            current_to_remove += line.strip() + "\n"
-            current_to_write += line.strip() + "\n"
+            current_to_remove += line + "\n"
+            current_to_write += line + "\n"
 
     changes.append({
                     "filepath": current_filepath,

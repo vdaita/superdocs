@@ -1,15 +1,10 @@
 from flask import request
-from langchain.chat_models import ChatOpenAI
-from langchain.vectorstores import Chroma
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.retrievers import BM25Retriever
-from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from repo import list_non_ignored_files, find_closest_file, get_documents
-from langchain.tools import format_tool_to_openai_function
-import diff_management
-from ripgrepy import Ripgrepy
+from .repo import list_non_ignored_files, find_closest_file, get_documents
+from .diff_management import fuzzy_process_diff
 from openai import OpenAI
 import json
+import tiktoken
 from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS, cross_origin
@@ -18,9 +13,15 @@ import logging
 import re
 from googlesearch import search
 from trafilatura import fetch_url, extract
-from FlagEmbedding import FlagModel
 
-import prompts
+from llama_index.vector_stores import ChromaVectorStore
+from llama_index.retrievers import BM25Retriever
+from llama_index import VectorStoreIndex, StorageContext, ServiceContext, QueryBundle
+from llama_index.postprocessor import SentenceTransformerRerank
+
+from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
+from .hybrid_retriever import HybridRetriever
+from .search_retrieval import retrieve_content
 
 load_dotenv()
 
@@ -42,10 +43,15 @@ load_dotenv()
 # model_temperature=0.1
 
 ## OpenAI
-openai_client = OpenAI(
-    api_key=os.environ["OPENAI_API_KEY"]
-)
+openai_client = None
+
+api_key = ""
+base_url = ""
 model_name = "gpt-4-1106-preview"
+auxiliary_model_name = ""
+
+encoding = tiktoken.get_encoding("cl100k_base")
+
 model_temperature=0.1
 
 test_response = """
@@ -56,19 +62,15 @@ app = Flask(__name__)
 cors = CORS(app, resources={r"/*": {"origins": "*"}})
 logging.getLogger('flask_cors').level = logging.DEBUG
 
-
 embeddings = HuggingFaceEmbeddings(model_name="TaylorAI/bge-micro-v2")
-perplexity_model = ChatOpenAI(
-    model_name="pplx-70b-online",
-    openai_api_key=os.environ["PERPLEXITY_API_KEY"],
-    openai_api_base="https://api.perplexity.ai",
-    max_tokens=800
-)
-
 db = {
-    "vectorstore": None,
-    "directory": None
+    "vectorstore_index": None,
+    "retriever": None,
+    "directory": None,
+    "hybrid_retriever": None
 }
+
+reranker = SentenceTransformerRerank(top_n=8, model="BAAI/bge-reranker-base")
 
 def chunk_text_with_overlap(text, chunk_size, overlap):
     """
@@ -121,69 +123,36 @@ def self_evaluated_gpt(task, query, previous_response=None, iterations=3):
     pass
 
 def get_retrieval_tools(directory):
-    def combined_codebase_search(args): # WIP
+    def combined_search(args):
         query = args["query"]
-
-        if db["vectorstore"]:
-            model = FlagModel(
-                'BAAI/bge-base-en-v1.5',
-                use_fp16=True
-            )
-
-            documents = db["vectorstore"].get()
-            retriever = BM25Retriever.from_documents(documents)
-            retriever.k = 25
-            semantic_docs = db["vectorstore"].similarity_search(query, k=25)
-            lexical_docs = retriever.get_relevant_documents(query)
-            # Rerank and find top 7 documents
-            embedded_query = model.encode_queries([query])
-            embedded_docs = model.encode([doc.page_content for doc in lexical_docs])
-            embedded_docs.append([f"From source: {doc.metadata['source']} \n {doc.page_content}" for doc in semantic_docs])
-
-            scores = embedded_query @ embedded_docs
-
-
-        return "Codebase search has not been enabled since the store is unloaded."
-
+        nodes = db["hybrid_retriever"].retrieve(query)
+        reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle=QueryBundle(
+            query
+        ))    
+        response = ""
+        for index, node in enumerate(reranked_nodes):
+            response += f"Snippet {index}: {node.get_text()} \n \n"
+        return response    
     def external_search(args):
         query = args["query"]
-        # return f"Query: {query} \n \n Response: Test Perplexity Response"
-        model_response = perplexity_model([HumanMessage(content=query)]).content
-        print("Perplexity model response: ", query, model_response)
-        return f"Query: {query} \n \n Response: {model_response}"
+        return retrieve_content(query, api_key, base_url, auxiliary_model_name)
+    
     def read_file(args):
         filepath = args["query"]
         closest_filepath = find_closest_file(directory, filepath)
         if not(closest_filepath):
             return "Filepath does not exist"
-        file = open(os.path.join(directory, closest_filepath), "r")
-        contents = file.read()
-        file.close()
-        return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
-    def semantic_search(args):
-        try:
-            global db
-            if db["vectorstore"]:
-                query = args["query"]
-                docs = db["vectorstore"].similarity_search(query)
-                snippet_text = "\n\n".join([f"File: {doc.metadata['source']} \n \n Content: ``\n{doc.page_content}\n``` \n ------" for doc in docs])
-                return f"Semantic search query: {query} \n \n Snippets found: {snippet_text}"
-            return "Semantic search has been disabled."
-        except Exception:
-            return "Semantic search has been disabled."
-    def lexical_search(args):
-        """Accepts regular expression search query and searches for all instances of it."""
-        query = args["query"]
-        rg = Ripgrepy(query, directory)
-        searched_content = rg.H().n().run().as_string
-        if len(searched_content) > 1200:
-            return "Too many instances"
-        return f"File lexical search: {query} \n \n Retrieved content: {searched_content}"
+        try: 
+            file = open(os.path.join(directory, closest_filepath), "r")
+            contents = file.read()
+            file.close()
+            return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+        except:
+            return f"File {closest_filepath} could not be found."
     return {
         "external": external_search,
         "file": read_file,
-        "semantic": semantic_search,
-        "lexical": lexical_search
+        "codebase": combined_search
     }
     # return ['external', 'semantic', 'lexical', 'file'], [external_search, semantic_search, lexical_search, read_file]
 
@@ -207,7 +176,7 @@ def extract_information_from_query(query: str, existing_content: list, directory
     messages = [
         {
             "role": "system",
-            "content": prompts.INFORMATION_EXTRACTION_SYSTEM_PROMPT
+            "content": INFORMATION_EXTRACTION_SYSTEM_PROMPT
         },
         {
             "role": "user",
@@ -253,55 +222,28 @@ def extract_information_from_query(query: str, existing_content: list, directory
 
     return context
 
+@app.post("/define_models")
+def define_models():
+    global openai_client
+    global model_name
+    global auxiliary_model_name
+    global base_url
+    global api_key
+
+    data = request.get_json()
+    print("Received data from frontend: ", data)
+
+    openai_client = OpenAI(
+        api_key=data["apiKey"],
+        base_url=data["apiUrl"]
+    )
+    model_name = data["modelName"]
+    auxiliary_model_name = data["auxiliaryModelName"]
+    base_url = data["apiUrl"]
+    api_key = data["apiKey"]
     
+    return {"ok": True}
 
-# def extract_information_from_query(query: str, existing_context: list, directory: str):
-#     print("Extract information from query: ", query, directory)
-#     global db
-#     # Add all relevant information relating to adding context
-#     context = existing_context
-
-#     prompt_order = [prompts.EXTERNAL_SEARCH_PROMPT, prompts.SEMANTIC_SEARCH_PROMPT, prompts.LEXICAL_SEARCH_PROMPT, prompts.FILE_READ_PROMPT]
-#     tool_names, tool_functions = get_retrieval_tools(directory)
-
-#     for index, system_prompt in enumerate(prompt_order):
-#         context_string = "\n".join(context)
-#         context_message = f"""
-#         Existing context:
-#         {context_string}
-#         \n \n
-#         Objective: {query}
-#         """
-
-#         if system_prompt == prompts.FILE_READ_PROMPT:
-#             context_message = f"User's current files: \n {list_non_ignored_files(directory)}" + context_message
-#         messages = [
-#             {
-#                 "role": "system",
-#                 "content": system_prompt
-#             },
-#             {
-#                 "role": "user",
-#                 "content": context_message
-#             }
-#         ]
-
-#         print("Sending messages: ", json.dumps(messages, indent=4))
-        
-#         response = openai_client.chat.completions.create(
-#             model=model_name,
-#             messages=messages,
-#             max_tokens=512
-#         )
-#         response_message = response.choices[0].message.content
-#         extractions = extract_content(response_message, tool_names[index])
-#         for extraction in extractions:
-#             extracted_content = tool_functions[index]({
-#                 "query": extraction
-#             })
-#             existing_context += f"\n {extracted_content}"
-        
-#     return context
 
 @app.post("/load_vectorstore")
 def load_vectorstore():
@@ -310,7 +252,16 @@ def load_vectorstore():
     print("Loading the vectorstore....")
     documents = get_documents(directory)
     print("Got the documents...")
-    db["vectorstore"] = Chroma.from_documents(documents, embeddings)
+
+    storage_context = StorageContext.from_defaults()
+
+    db["vectorstore"] = VectorStoreIndex(
+        documents,
+        storage_context=storage_context,
+    )
+    db["retriever"] = BM25Retriever.from_defaults(nodes=documents, similarity_top_k=20)
+    db["hybrid_retriever"] = HybridRetriever(db["vectorstore"].as_retriever(similarity_top_k=20), db["retriever"])
+
     db["directory"] = directory
     return {"ok": True}
 
@@ -336,7 +287,7 @@ def break_down_problem():
     print("Received: ", data)
 
     plan_changes_messages = [
-        {"role": "system", "content": prompts.PLANNING_SYSTEM_PROMPT},
+        {"role": "system", "content": PLANNING_SYSTEM_PROMPT},
     ]
     for context_item in context:
         plan_changes_messages.append({
@@ -372,7 +323,7 @@ def chat():
     condense_query_response = openai_client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n {prompts.CONDENSE_QUERY_PROMPT}: {current_question}"}
+            {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n {CONDENSE_QUERY_PROMPT}: {current_question}"}
         ],
         temperature=model_temperature,
         max_tokens=200
@@ -383,7 +334,7 @@ def chat():
     contextual_answer_response = openai_client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": prompts.QA_PROMPT}
+            {"role": "system", "content": QA_PROMPT}
         ],
         temperature=model_temperature,
         max_tokens=300
@@ -401,30 +352,42 @@ def chat():
 
 @app.post("/execute")
 def solve_problem():
+    global model_name
+    global model_temperature
+
     data = request.get_json()
     directory = data["directory"]
     plan = data["plan"]
     context = data["context"]
+    token_limit = data["tokenLimit"]
     
     print("Received: ", data)
     context = "\n".join(context)
 
     solve_messages = [
-        {"role": "system", "content": prompts.EXECUTOR_SYSTEM_PROMPTS},
-        {"role": "system", "content": prompts.EXECUTOR_SYSTEM_REMINDER},
+        {"role": "system", "content": EXECUTOR_SYSTEM_PROMPTS},
+        {"role": "system", "content": EXECUTOR_SYSTEM_REMINDER},
+        {"role": "user", "content": f"## Context: \n \n {context}"},
+        {"role": "user", "content": f"Plan to implement: \n {plan}"}
     ]
 
-    for context_message in context:
-        solve_messages.append({"role": "user", "content": context_message})
+    total_token_count = 0
+    print()
 
-    solve_messages.append({"role": "assistant", "content": f"Plan to implement: \n {plan}"})
+    for message in solve_messages:
+        message_token_length = len(encoding.encode(message["content"]))
+        print("Processed a message")
+        total_token_count += message_token_length
+    print("Total token length: ", total_token_count);
+
 
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=solve_messages,
-        max_tokens=1536,
+        max_tokens=2048,
         temperature=model_temperature
     )
+
 
     return_messages = []
 
@@ -439,7 +402,7 @@ def solve_problem():
 
     replacements = []
     for code_block in code_blocks:
-        replacements.extend(diff_management.fuzzy_process_diff(directory, code_block))
+        replacements.extend(fuzzy_process_diff(directory, code_block))
     
     for replacement in replacements:
         return_messages.append({
@@ -447,6 +410,20 @@ def solve_problem():
             "content": replacement
         })
     
+    return_messages.append({
+        "type": "message",
+        "content": response_message
+    })
     print("Returning messages: ", return_messages)
     
     return {"execution": return_messages}
+
+def start_server():
+    app.run(port=8123, debug=True)
+
+if __name__ == "__main__":
+    start_server()
+
+
+# if __name__ == "__main__":
+#     typer.run(run)
