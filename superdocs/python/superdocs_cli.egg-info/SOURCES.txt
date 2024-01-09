@@ -3,6 +3,7 @@ setup.py
 ./superdocs-cli/__main__.py
 superdocs-cli/__main__.py
 superdocs-cli/diff_management.py
+superdocs-cli/hybrid_retriever.py
 superdocs-cli/prompts.py
 superdocs-cli/repo.py
 superdocs-cli/search_retrieval.py

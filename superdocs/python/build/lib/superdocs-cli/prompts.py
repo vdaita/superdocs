@@ -140,16 +140,20 @@ INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
     You are a development assistant, responsible for finding and requesting information to solve the objective.
     From the provided query and existing context, you are responsible for determining what kind of further information should be gathered.
     To request further information, you can use the following four tags:
-    Lexical queries are for searching for text within the codebase: <lexical>query</lexical>
-    Semantic queries are for semantically searching for code ideas and blocks within the codebase: <semantic>query</semantic>
-    File queries are for opening and retrieving the contents of files within the codebase: <file>filepath</file>. 
-    External queries use Google for retrieval external API documentation, consulting externally for errors, etc.: <external>query</external>
-
-    Minimize the number of search requests and justify each search request with the <justification></justification> tags.
+    Codebase queries are for searching for content within the user's current codebase: <codebase>query</codebase>
+    File queries are for opening and retrieving the contents of full, complete files within the codebase: <file>filepath</file>. 
+    External queries use Google for retrieval external API documentation, consulting externally for errors, finding tools to use, etc.: <external>query</external>
+    Add as much context, such as programming language or framework when making requests.
+    Minimize the number of requests.
     Think step-by-step.
 
     Do not write any code planning or coding suggestions under any circumstances.
     You can provide multiple queries at one go.
+
+# Example conversation 1
+
+## USER: Objective: Write a python script that pulls images of buzzcuts from google images
+## ASSISTANT: <external>Python libraries for downloading google images</external> <external>Python script for downloading images from google</external>
     """
 
 PLANNING_SYSTEM_PROMPT = """

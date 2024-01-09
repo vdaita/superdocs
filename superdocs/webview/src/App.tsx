@@ -60,11 +60,31 @@ function App() {
         requestUserResponse();
       } else if (type == "info") {
         setDirectory(content["directory"]);
+        sendApiKeyToBackend(content);
       }
     });
   }, []);
 
   let requestUserResponse = () => {
+    setLoading(false);
+  }
+
+  let sendApiKeyToBackend = async (content: any) => {
+    setMessage("Sending API Key information over to the backend...");
+    setLoading(true);
+
+    try {
+      let response = await axios.post(`${serverUrl}/define_models`, content);
+      console.log("Finished sending the information over to the backend: ", response)
+      if(response.statusText !== "OK") {
+        throw "Error";
+      }
+    } catch (e) {
+      console.error(e);
+      toast("There was an error sending information to the backend");
+    }
+
+    setMessage("");
     setLoading(false);
   }
 

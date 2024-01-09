@@ -65,15 +65,19 @@ def get_documents(directory, ignore_file=".gitignore", no_gitignore=False, parse
             print("         Code suffixes work")
             filepath = os.path.join(directory, rfilepath)
             print("Loading: ", filepath)
-            file = open(filepath, "r")
-            contents = file.read()
-            file.close()      
-            
-            code_splitter = CodeSplitter(language=language_map[ext])
-            split_text = code_splitter.split_text(contents)
 
-            all_docs.extend(Node(text=f"Filename: {rfilepath} \n Content: {text}") for text in split_text)
-            print("Finished.")
+            try:
+                file = open(filepath, "r")
+                contents = file.read()
+                file.close()      
+                
+                code_splitter = CodeSplitter(language=language_map[ext])
+                split_text = code_splitter.split_text(contents)
+
+                all_docs.extend(Node(text=f"Filename: {rfilepath} \n Content: {text}") for text in split_text)
+                print("Finished.")
+            except:
+                print("Either the file doens't exist or there was an error.")
    
     return all_docs
 

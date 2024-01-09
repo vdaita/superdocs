@@ -139,14 +139,17 @@ def get_retrieval_tools(directory):
         closest_filepath = find_closest_file(directory, filepath)
         if not(closest_filepath):
             return "Filepath does not exist"
-        file = open(os.path.join(directory, closest_filepath), "r")
-        contents = file.read()
-        file.close()
-        return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+        try: 
+            file = open(os.path.join(directory, closest_filepath), "r")
+            contents = file.read()
+            file.close()
+            return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+        except:
+            return f"File {closest_filepath} could not be found."
     return {
         "external": external_search,
         "file": read_file,
-        "combined_search": combined_search
+        "codebase": combined_search
     }
     # return ['external', 'semantic', 'lexical', 'file'], [external_search, semantic_search, lexical_search, read_file]
 
@@ -225,6 +228,8 @@ def define_models():
     global api_key
 
     data = request.get_json()
+    print("Received data from frontend: ", data)
+
     openai_client = OpenAI(
         api_key=data["apiKey"],
         base_url=data["apiUrl"]
@@ -233,6 +238,8 @@ def define_models():
     auxiliary_model_name = data["auxiliaryModelName"]
     base_url = data["apiUrl"]
     api_key = data["apiKey"]
+    
+    return {"ok": True}
 
 
 @app.post("/load_vectorstore")

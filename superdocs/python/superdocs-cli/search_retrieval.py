@@ -1,5 +1,9 @@
 from functools import partial
 from typing import List
+import requests
+from readability import Document
+
+from markdownify import markdownify as md
 
 from langchain.chat_models import ChatOpenAI
 from googlesearch import search
@@ -10,7 +14,7 @@ from langchain.prompts import PromptTemplate
 from langchain.schema import StrOutputParser
 from langchain.chains.summarize import load_summarize_chain
 
-text_splitter = TokenTextSplitter(chunk_size=10000, chunk_overlap=500)
+text_splitter = TokenTextSplitter(chunk_size=3000, chunk_overlap=500)
 
 # retrieval_function = {
 #     "name": "retrieve_documentation_and_search",
@@ -24,14 +28,17 @@ def join_texts(texts: List[str]) -> str:
     return "\n\n".join(text for text in texts)
 
 def summary(objective, content, api_key, base_url, model_name):
-    model = ChatOpenAI(temperature = 0, model = "gpt-3.5-turbo-16k-0613", base_url=base_url, api_key=api_key, model_name=model_name) # TODO: Switch to Mistral
+    model = ChatOpenAI(temperature = 0, base_url=base_url, api_key=api_key, model=model_name) # TODO: Switch to Mistral
 
     docs = text_splitter.create_documents([content])
+    for index, doc in enumerate(docs):
+        print(f"Document {index}: with length {len(doc.page_content)}")
     
     map_prompt = """
-    Write a summary of the following text for {objective}:
+    Extract the necessary information needed to complete {objective} from the following text: \n \n
     "{text}"
-    SUMMARY:
+    \n \n
+    Condensed:
     """
     map_prompt_template = PromptTemplate(template=map_prompt, input_variables=["text", "objective"])
     
@@ -52,7 +59,9 @@ def retrieve_content(question: str, api_key: str, base_url: str, model_name: str
     results = search(question, num_results=3, advanced=True, timeout=5)
     combined_text = ""
     for result in results:
-        downloaded = fetch_url(result.url)
-        combined_text += "\n" + extract(downloaded)
+        response = requests.get(result.url)
+        doc = Document(response.text)
+        html_summary = doc.summary()
+        combined_text += "\n\n" + md(html_summary)
 
-    return summary(combined_text, question, api_key, base_url, model_name)    
+    return summary(question, combined_text, api_key, base_url, model_name)    

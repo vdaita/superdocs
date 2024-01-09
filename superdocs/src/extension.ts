@@ -61,10 +61,27 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
 
+		const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
+		
+		const apiKey = superdocsConfig.get("apiKey");
+		const apiUrl = superdocsConfig.get("apiUrl");
+		const modelName = superdocsConfig.get("modelName");
+
+		const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
+
+		if(!apiKey || !apiUrl){
+			vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
+			return;
+		}
+
 		webviewView.webview.postMessage({
 			type: "info",
 			content: {
-				directory: vscode.workspace.workspaceFolders![0].uri.path
+				directory: vscode.workspace.workspaceFolders![0].uri.path,
+				apiKey: apiKey,
+				apiUrl: apiUrl,
+				modelName: modelName,
+				auxiliaryModelName: auxiliaryModelName
 			}
 		})
 
@@ -116,16 +133,48 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		let sendDirectory = vscode.commands.registerCommand("superdocs.sendDirectory", () => {
+			const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
+		
+			const apiKey = superdocsConfig.get("apiKey");
+			const apiUrl = superdocsConfig.get("apiUrl");
+			const modelName = superdocsConfig.get("modelName");
+	
+			const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
+	
+			if(!apiKey || !apiUrl){
+				vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
+				return;
+			}
+	
 			webviewView.webview.postMessage({
 				type: "info",
 				content: {
-					directory: vscode.workspace.workspaceFolders![0].uri.path
+					directory: vscode.workspace.workspaceFolders![0].uri.path,
+					apiKey: apiKey,
+					apiUrl: apiUrl,
+					modelName: modelName,
+					auxiliaryModelName: auxiliaryModelName
 				}
 			})
 		})
 
+		let sendTerminal = vscode.commands.registerCommand("superdocs.sendTerminal", async () => {
+			let terminalContent = await this.terminalTool?.getTerminalContent();
+			webviewView.webview.postMessage({
+				type: "snippet",
+				content: {
+					code: terminalContent,
+					language: "bash",
+					startIndex: undefined,
+					endIndex: undefined,
+					filepath: "User's terminal"
+				}
+			});
+		});
+
 		this._context.subscriptions.push(addSnippet);
 		this._context.subscriptions.push(sendDirectory);
+		this._context.subscriptions.push(sendTerminal);
 	}
 
 	private _getHtmlForWebview(context: vscode.ExtensionContext){

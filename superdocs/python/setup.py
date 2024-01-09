@@ -17,6 +17,8 @@ setup(
         "tiktoken==0.4.0",
         "trafilatura==1.6.1",
         "typer[all]==0.9.0",
+        "rank-bm25==0.2.2",
+        "llama-index==0.9.27"
     ],
     scripts=["./superdocs-cli/__main__.py"],
     packages=["superdocs-cli"],
