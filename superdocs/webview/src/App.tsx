@@ -36,6 +36,8 @@ function App() {
 
   const [infoIterate, setInfoIterate] = useState(false);
 
+  const [tokenLimit, setTokenLimit] = useState("1500");
+
   useEffect(() => {
     VSCodeMessage.onMessage((message) => {
       console.log("Received message: ", message)
@@ -91,6 +93,14 @@ function App() {
   let sendExecutorMessage = async () => {
     setMessage("");
     setLoading(true);
+
+    let integerTokenLimit = 1536;
+    try {
+      integerTokenLimit = parseInt(tokenLimit);
+    } catch (e) {
+      toast("There was an error parsing your custom token limit, defaulting to 1536")
+    }
+
     
     try {
       let response = await axios.post(`${serverUrl}/execute`, {
@@ -98,6 +108,7 @@ function App() {
         plan: plan,
         message: message,
         directory: directory,
+        tokenLimit: integerTokenLimit
       });
       console.log("Received execution response from the backend: ", response)
       if(response.statusText !== "OK"){
@@ -247,6 +258,7 @@ function App() {
 
         <Tabs.Panel value="chat">
           <Box m="lg">
+           
             <Text>Currently in directory:</Text>
             <TextInput onChange={(e) => setDirectory(e.target.value)} value={directory} m={2} placeholder="Your directory should automatically load here. Edit it to be in the correct git directory."></TextInput>
 
@@ -290,6 +302,11 @@ function App() {
               <Accordion.Item key="execution" value="execution">
                 <Accordion.Control>📝 execution</Accordion.Control>
                 <Accordion.Panel>
+
+                <Text>Set execution custom token limit (currently disabled):</Text>
+                <TextInput disabled={true} onChange={(e) => setTokenLimit(e.target.value)} value={tokenLimit}></TextInput>
+
+
                   {executionChanges.length}
                   {executionChanges.map((item, index) => (
                     <Box key={index}>

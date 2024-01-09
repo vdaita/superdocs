@@ -4,6 +4,7 @@ from .repo import list_non_ignored_files, find_closest_file, get_documents
 from .diff_management import fuzzy_process_diff
 from openai import OpenAI
 import json
+import tiktoken
 from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS, cross_origin
@@ -48,6 +49,8 @@ api_key = ""
 base_url = ""
 model_name = "gpt-4-1106-preview"
 auxiliary_model_name = ""
+
+encoding = tiktoken.get_encoding("cl100k_base")
 
 model_temperature=0.1
 
@@ -349,10 +352,14 @@ def chat():
 
 @app.post("/execute")
 def solve_problem():
+    global model_name
+    global model_temperature
+
     data = request.get_json()
     directory = data["directory"]
     plan = data["plan"]
     context = data["context"]
+    token_limit = data["tokenLimit"]
     
     print("Received: ", data)
     context = "\n".join(context)
@@ -360,19 +367,27 @@ def solve_problem():
     solve_messages = [
         {"role": "system", "content": EXECUTOR_SYSTEM_PROMPTS},
         {"role": "system", "content": EXECUTOR_SYSTEM_REMINDER},
+        {"role": "user", "content": f"## Context: \n \n {context}"},
+        {"role": "user", "content": f"Plan to implement: \n {plan}"}
     ]
 
-    for context_message in context:
-        solve_messages.append({"role": "user", "content": context_message})
+    total_token_count = 0
+    print()
 
-    solve_messages.append({"role": "assistant", "content": f"Plan to implement: \n {plan}"})
+    for message in solve_messages:
+        message_token_length = len(encoding.encode(message["content"]))
+        print("Processed a message")
+        total_token_count += message_token_length
+    print("Total token length: ", total_token_count);
+
 
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=solve_messages,
-        max_tokens=1536,
+        max_tokens=2048,
         temperature=model_temperature
     )
+
 
     return_messages = []
 
@@ -395,6 +410,10 @@ def solve_problem():
             "content": replacement
         })
     
+    return_messages.append({
+        "type": "message",
+        "content": response_message
+    })
     print("Returning messages: ", return_messages)
     
     return {"execution": return_messages}

@@ -4,6 +4,7 @@ from .repo import list_non_ignored_files, find_closest_file, get_documents
 from .diff_management import fuzzy_process_diff
 from openai import OpenAI
 import json
+import tiktoken
 from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS, cross_origin
@@ -48,6 +49,8 @@ api_key = ""
 base_url = ""
 model_name = "gpt-4-1106-preview"
 auxiliary_model_name = ""
+
+encoding = tiktoken.get_encoding("cl100k_base")
 
 model_temperature=0.1
 
@@ -139,10 +142,13 @@ def get_retrieval_tools(directory):
         closest_filepath = find_closest_file(directory, filepath)
         if not(closest_filepath):
             return "Filepath does not exist"
-        file = open(os.path.join(directory, closest_filepath), "r")
-        contents = file.read()
-        file.close()
-        return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+        try: 
+            file = open(os.path.join(directory, closest_filepath), "r")
+            contents = file.read()
+            file.close()
+            return f"File contents of: {closest_filepath} \n \n ```\n{contents}\n```"
+        except:
+            return f"File {closest_filepath} could not be found."
     return {
         "external": external_search,
         "file": read_file,
@@ -346,10 +352,14 @@ def chat():
 
 @app.post("/execute")
 def solve_problem():
+    global model_name
+    global model_temperature
+
     data = request.get_json()
     directory = data["directory"]
     plan = data["plan"]
     context = data["context"]
+    token_limit = data["tokenLimit"]
     
     print("Received: ", data)
     context = "\n".join(context)
@@ -370,6 +380,15 @@ def solve_problem():
         max_tokens=1536,
         temperature=model_temperature
     )
+
+    total_token_count = 0
+
+    for message in solve_messages:
+        message_token_length = len(encoding.encode(message["content"]))
+        print(message_token_length)
+        total_token_count += message_token_length
+
+    print("Total token length: ", total_token_count);
 
     return_messages = []
 
@@ -392,6 +411,9 @@ def solve_problem():
             "content": replacement
         })
     
+    return_messages.append({
+        "type": "message"
+    })
     print("Returning messages: ", return_messages)
     
     return {"execution": return_messages}
