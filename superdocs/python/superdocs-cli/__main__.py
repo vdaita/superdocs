@@ -17,7 +17,7 @@ from trafilatura import fetch_url, extract
 from llama_index.vector_stores import ChromaVectorStore
 from llama_index.retrievers import BM25Retriever
 from llama_index import VectorStoreIndex, StorageContext, ServiceContext, QueryBundle
-from llama_index.postprocessor import SentenceTransformerRerank
+from llama_index.postprocessor import SentenceTransformerRerank, LLMRerank
 
 from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from .hybrid_retriever import HybridRetriever

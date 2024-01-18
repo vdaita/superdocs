@@ -19,6 +19,7 @@ setup(
         "typer[all]==0.9.0",
         "rank-bm25==0.2.2",
         "llama-index==0.9.27"
+        "nltk==3.8"
     ],
     scripts=["./superdocs-cli/__main__.py"],
     packages=["superdocs-cli"],

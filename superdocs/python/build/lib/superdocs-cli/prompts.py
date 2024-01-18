@@ -168,3 +168,24 @@ PLEASE DO NOT WRITE ANY CODE YOURSELF.
 
 Let's think step by step.
 """
+
+SNIPPET_EXTRACTION_PROMPT = """
+Each snippet of text has been assigned a number. Identify which snippets of text are most relevant to writing code that solves the provided objective.
+Extract five snippets at maximum and enclose each snippet ID separately and individually with snippet XML tags. Think step-by-step. For example an output like such:
+
+Statements there that think through the process...
+Further statements...
+<snippet>3</snippet>
+Thoughts...
+<snippet>7</snippet>
+Thoughts...
+<snippet>12</snippet>
+Thoughts...
+<snippet>14</snippet>
+Thoughts...
+<snippet>18</snippet>
+"""
+
+CODE_SPLIT_PROMPT = """
+
+"""
