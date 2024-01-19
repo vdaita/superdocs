@@ -13,6 +13,12 @@ from langchain.text_splitter import TokenTextSplitter
 from langchain.prompts import PromptTemplate
 from langchain.schema import StrOutputParser, HumanMessage, SystemMessage, AIMessage
 from langchain.chains.summarize import load_summarize_chain
+
+from llama_index.schema import Node, QueryBundle, NodeWithScore
+from llama_index.postprocessor import LLMRerank
+from llama_index import ServiceContext
+from llama_index.llms import OpenAI
+
 from .prompts import SNIPPET_EXTRACTION_PROMPT
 
 import re
@@ -34,43 +40,28 @@ def extract_content(text, tag):
     return matches
 
 def summary(objective, content, api_key, base_url, model_name):
-    # Question: if someone were to try and implement objective, what information should be sent over?
-    model = ChatOpenAI(temperature = 0.1, base_url=base_url, api_key=api_key, model=model_name) # TODO: Switch to Mistral
+    split_content = extractive_text_splitter.split_text(content)
+    split_content_nodes = [Node(text=text) for text in split_content]
+    split_content_nodes = [NodeWithScore(node=node, score=1) for node in split_content_nodes]
 
-    extracted_content_list = []
+    print(len(split_content_nodes), split_content_nodes[0])
+
+    llm = OpenAI(model=model_name, temperature=0, base_url=base_url, api_key=api_key)
+    service_context = ServiceContext.from_defaults(llm=llm, chunk_size=512)
     
-    if isinstance(content, str):
-        split_content = extractive_text_splitter.split_text(content)
-    elif isinstance(content, list):
-        split_content = []
-        for content_chunk in content:
-            split_content.extend(extractive_text_splitter.split_text(content_chunk))
+    query_bundle = QueryBundle(objective)
+    reranker = LLMRerank(
+        choice_batch_size=5,
+        top_n=7,
+        service_context=service_context
+    )
+    retriever_nodes = reranker.postprocess_nodes(
+        split_content_nodes, query_bundle
+    )
 
-    chunk_count = 25
-
-    for start in range(0, len(split_content), chunk_count):
-        selected_range = split_content[start: max(start + chunk_count, len(split_content))]
-        snippet_statements = ""
-        for snippet_index, snippet in enumerate(selected_range):
-            snippet_statements += f"# Snippet {snippet_index}: \n \n {snippet} \n \n"
-
-        response = model([SystemMessage(content=SNIPPET_EXTRACTION_PROMPT), HumanMessage(content=f"Objective: {objective}"), HumanMessage(content=f"Snippets: \n \n {snippet_statements}")])
-        response = response.content
-        snippets = extract_content(response, "snippet")
-        for snippet in snippets:
-            try:
-                selected_index = int(snippet)
-                extracted_content_list.append(selected_range[selected_index])
-            except Exception:
-                print("There was an error figuring out what is snippet: ", id)
-
-    if len(extracted_content_list) > 10:
-        return summary(objective, extracted_content_list, api_key, base_url, model_name)
-    else: 
-        summary_statement = "\n".join([f"### Snippet {i}: \n {extracted_content_list[i]}" for i in range(len(extracted_content_list))])
-        return f"Selected snippets to solve objective {objective}: {summary_statement}"
-
-
+    nodes_string = "\n".join([f"## Snippet {i}: {node.text}" for i, node in enumerate(retriever_nodes)])
+    return f"# Relevant snippets for {objective}: \n \n {nodes_string}"
+    
 
 def retrieve_content(question: str, api_key: str, base_url: str, model_name: str):
     # identify 

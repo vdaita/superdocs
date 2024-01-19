@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="superdocs-cli",
-    version="0.0.1",
+    version="0.0.2",
     install_requires=[
         "Flask==3.0.0",
         "Flask-Cors==4.0.0",
@@ -18,8 +18,8 @@ setup(
         "trafilatura==1.6.1",
         "typer[all]==0.9.0",
         "rank-bm25==0.2.2",
-        "llama-index==0.9.27"
-        "nltk==3.8"
+        "llama-index==0.9.27",
+        "nltk==3.8.1"
     ],
     scripts=["./superdocs-cli/__main__.py"],
     packages=["superdocs-cli"],

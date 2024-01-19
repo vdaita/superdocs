@@ -18,6 +18,7 @@ from llama_index.vector_stores import ChromaVectorStore
 from llama_index.retrievers import BM25Retriever
 from llama_index import VectorStoreIndex, StorageContext, ServiceContext, QueryBundle
 from llama_index.postprocessor import SentenceTransformerRerank, LLMRerank
+from llama_index.schema import Node
 
 from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from .hybrid_retriever import HybridRetriever
@@ -250,13 +251,13 @@ def load_vectorstore():
     data = request.get_json()
     directory = data["directory"]
     print("Loading the vectorstore....")
-    documents = get_documents(directory)
-    print("Got the documents...")
+    documents = get_documents(directory, api_key=api_key, model_name=auxiliary_model_name, base_url=base_url)
+    # documents = [Node(text="test")]
+    print("Got the documents... ", len(documents), type(documents[0]))
 
     storage_context = StorageContext.from_defaults()
-
     db["vectorstore"] = VectorStoreIndex(
-        documents,
+        nodes=documents,
         storage_context=storage_context,
     )
     db["retriever"] = BM25Retriever.from_defaults(nodes=documents, similarity_top_k=20)

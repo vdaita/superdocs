@@ -65,17 +65,17 @@ def list_non_ignored_files(directory):
 
     return non_ignored_files
 
-def get_documents(directory, api_key, model_name, api_url):
+def get_documents(directory, api_key=None, model_name=None, base_url=None):
     files = list_non_ignored_files(directory)
     all_docs = []
 
-    model = OpenAI(api_key, model_name=model_name, base_url=api_url)
+    model = OpenAI(api_key=api_key, base_url=base_url)
 
     for rfilepath in files:
         ext = rfilepath.split(".")[-1]
         print("Processing filepath: ", rfilepath, ext, ext in code_suffixes)
         if ext in code_suffixes:
-            filepath = open(directory, rfilepath)
+            filepath = os.path.join(directory, rfilepath)
             try:
                 file = open(filepath, "r")
                 contents = file.read()
@@ -112,6 +112,7 @@ def get_documents(directory, api_key, model_name, api_url):
                     all_docs.extend(get_code_splitter_docs_from_file(contents, rfilepath))
             except:
                 print("File could not be properly found or opened.")
+    return all_docs
 
 def get_code_splitter_docs_from_file(contents, rfilepath):
     extension = rfilepath.split(".")[-1]

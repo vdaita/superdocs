@@ -144,7 +144,7 @@ INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
     File queries are for opening and retrieving the contents of full, complete files within the codebase: <file>filepath</file>. 
     External queries use Google for retrieval external API documentation, consulting externally for errors, finding tools to use, etc.: <external>query</external>
     Add as much context, such as programming language or framework when making requests.
-    Minimize the number of requests.
+    Complete all the requests you think you need at one go.
     Think step-by-step.
 
     Do not write any code planning or coding suggestions under any circumstances.
