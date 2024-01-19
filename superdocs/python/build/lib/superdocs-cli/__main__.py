@@ -17,7 +17,8 @@ from trafilatura import fetch_url, extract
 from llama_index.vector_stores import ChromaVectorStore
 from llama_index.retrievers import BM25Retriever
 from llama_index import VectorStoreIndex, StorageContext, ServiceContext, QueryBundle
-from llama_index.postprocessor import SentenceTransformerRerank
+from llama_index.postprocessor import SentenceTransformerRerank, LLMRerank
+from llama_index.schema import Node
 
 from .prompts import EXTERNAL_SEARCH_PROMPT, SEMANTIC_SEARCH_PROMPT, LEXICAL_SEARCH_PROMPT, FILE_READ_PROMPT, QA_PROMPT, EXECUTOR_SYSTEM_PROMPTS, EXECUTOR_SYSTEM_REMINDER, CONDENSE_QUERY_PROMPT, INFORMATION_EXTRACTION_SYSTEM_PROMPT, PLANNING_SYSTEM_PROMPT
 from .hybrid_retriever import HybridRetriever
@@ -250,13 +251,13 @@ def load_vectorstore():
     data = request.get_json()
     directory = data["directory"]
     print("Loading the vectorstore....")
-    documents = get_documents(directory)
-    print("Got the documents...")
+    documents = get_documents(directory, api_key=api_key, model_name=auxiliary_model_name, base_url=base_url)
+    # documents = [Node(text="test")]
+    print("Got the documents... ", len(documents), type(documents[0]))
 
     storage_context = StorageContext.from_defaults()
-
     db["vectorstore"] = VectorStoreIndex(
-        documents,
+        nodes=documents,
         storage_context=storage_context,
     )
     db["retriever"] = BM25Retriever.from_defaults(nodes=documents, similarity_top_k=20)
@@ -367,28 +368,27 @@ def solve_problem():
     solve_messages = [
         {"role": "system", "content": EXECUTOR_SYSTEM_PROMPTS},
         {"role": "system", "content": EXECUTOR_SYSTEM_REMINDER},
+        {"role": "user", "content": f"## Context: \n \n {context}"},
+        {"role": "user", "content": f"Plan to implement: \n {plan}"}
     ]
 
-    for context_message in context:
-        solve_messages.append({"role": "user", "content": context_message})
+    total_token_count = 0
+    print()
 
-    solve_messages.append({"role": "assistant", "content": f"Plan to implement: \n {plan}"})
+    for message in solve_messages:
+        message_token_length = len(encoding.encode(message["content"]))
+        print("Processed a message")
+        total_token_count += message_token_length
+    print("Total token length: ", total_token_count);
+
 
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=solve_messages,
-        max_tokens=1536,
+        max_tokens=2048,
         temperature=model_temperature
     )
 
-    total_token_count = 0
-
-    for message in solve_messages:
-        message_token_length = len(encoding.encode(message["content"]))
-        print(message_token_length)
-        total_token_count += message_token_length
-
-    print("Total token length: ", total_token_count);
 
     return_messages = []
 
@@ -412,7 +412,8 @@ def solve_problem():
         })
     
     return_messages.append({
-        "type": "message"
+        "type": "message",
+        "content": response_message
     })
     print("Returning messages: ", return_messages)
     

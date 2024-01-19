@@ -11,48 +11,57 @@ from trafilatura import fetch_url, extract
 import tiktoken
 from langchain.text_splitter import TokenTextSplitter
 from langchain.prompts import PromptTemplate
-from langchain.schema import StrOutputParser
+from langchain.schema import StrOutputParser, HumanMessage, SystemMessage, AIMessage
 from langchain.chains.summarize import load_summarize_chain
 
+from llama_index.schema import Node, QueryBundle, NodeWithScore
+from llama_index.postprocessor import LLMRerank
+from llama_index import ServiceContext
+from llama_index.llms import OpenAI
+
+from .prompts import SNIPPET_EXTRACTION_PROMPT
+
+import re
+
 text_splitter = TokenTextSplitter(chunk_size=3000, chunk_overlap=500)
+extractive_text_splitter = TokenTextSplitter(chunk_size=400, chunk_overlap=0)
 
 # retrieval_function = {
 #     "name": "retrieve_documentation_and_search",
 #     "description": 
 # }
 
-summarize_prompt = PromptTemplate.from_template("The user is trying to answer this question: \"{question}\". Find and summarize the most relevant parts of the following context to do so. If nothing is relevant to the question, don't output anything. \n \n Context: {context} \n \n")
-collapse_prompt = PromptTemplate.from_template("Collapse this content while still answering the following question: \"{question}\". \n \n Content: {content}")
-
 def join_texts(texts: List[str]) -> str:
     return "\n\n".join(text for text in texts)
 
-def summary(objective, content, api_key, base_url, model_name):
-    model = ChatOpenAI(temperature = 0, base_url=base_url, api_key=api_key, model=model_name) # TODO: Switch to Mistral
+def extract_content(text, tag):
+    pattern = r'<' + tag + '>(.*?)</' + tag + '>'
+    matches = re.findall(pattern, text, re.DOTALL)
+    return matches
 
-    docs = text_splitter.create_documents([content])
-    for index, doc in enumerate(docs):
-        print(f"Document {index}: with length {len(doc.page_content)}")
+def summary(objective, content, api_key, base_url, model_name):
+    split_content = extractive_text_splitter.split_text(content)
+    split_content_nodes = [Node(text=text) for text in split_content]
+    split_content_nodes = [NodeWithScore(node=node, score=1) for node in split_content_nodes]
+
+    print(len(split_content_nodes), split_content_nodes[0])
+
+    llm = OpenAI(model=model_name, temperature=0, base_url=base_url, api_key=api_key)
+    service_context = ServiceContext.from_defaults(llm=llm, chunk_size=512)
     
-    map_prompt = """
-    Extract the necessary information needed to complete {objective} from the following text: \n \n
-    "{text}"
-    \n \n
-    Condensed:
-    """
-    map_prompt_template = PromptTemplate(template=map_prompt, input_variables=["text", "objective"])
-    
-    summary_chain = load_summarize_chain(
-        llm=model, 
-        chain_type='map_reduce',
-        map_prompt = map_prompt_template,
-        combine_prompt = map_prompt_template,
-        verbose = False
+    query_bundle = QueryBundle(objective)
+    reranker = LLMRerank(
+        choice_batch_size=5,
+        top_n=7,
+        service_context=service_context
+    )
+    retriever_nodes = reranker.postprocess_nodes(
+        split_content_nodes, query_bundle
     )
 
-    output = summary_chain.run(input_documents=docs, objective=objective)
-
-    return output
+    nodes_string = "\n".join([f"## Snippet {i}: {node.text}" for i, node in enumerate(retriever_nodes)])
+    return f"# Relevant snippets for {objective}: \n \n {nodes_string}"
+    
 
 def retrieve_content(question: str, api_key: str, base_url: str, model_name: str):
     # identify 

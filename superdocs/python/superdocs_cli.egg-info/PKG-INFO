@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: superdocs-cli
-Version: 0.0.1
+Version: 0.0.2
 Requires-Dist: Flask==3.0.0
 Requires-Dist: Flask-Cors==4.0.0
 Requires-Dist: gitpython==3.1.37
@@ -16,3 +16,4 @@ Requires-Dist: trafilatura==1.6.1
 Requires-Dist: typer[all]==0.9.0
 Requires-Dist: rank-bm25==0.2.2
 Requires-Dist: llama-index==0.9.27
+Requires-Dist: nltk==3.8.1

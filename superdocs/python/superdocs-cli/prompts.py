@@ -144,7 +144,7 @@ INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
     File queries are for opening and retrieving the contents of full, complete files within the codebase: <file>filepath</file>. 
     External queries use Google for retrieval external API documentation, consulting externally for errors, finding tools to use, etc.: <external>query</external>
     Add as much context, such as programming language or framework when making requests.
-    Minimize the number of requests.
+    Complete all the requests you think you need at one go.
     Think step-by-step.
 
     Do not write any code planning or coding suggestions under any circumstances.
@@ -167,4 +167,25 @@ Make sure that each diff block starts with ```diff and ends with ```.
 PLEASE DO NOT WRITE ANY CODE YOURSELF.
 
 Let's think step by step.
+"""
+
+SNIPPET_EXTRACTION_PROMPT = """
+Each snippet of text has been assigned a number. Identify which snippets of text are most relevant to writing code that solves the provided objective.
+Extract five snippets at maximum and enclose each snippet ID separately and individually with snippet XML tags. Think step-by-step. For example an output like such:
+
+Statements there that think through the process...
+Further statements...
+<snippet>3</snippet>
+Thoughts...
+<snippet>7</snippet>
+Thoughts...
+<snippet>12</snippet>
+Thoughts...
+<snippet>14</snippet>
+Thoughts...
+<snippet>18</snippet>
+"""
+
+CODE_SPLIT_PROMPT = """
+
 """
