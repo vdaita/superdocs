@@ -133,27 +133,39 @@ You always COMPLETELY IMPLEMENT the needed code!
 """
 
 CONDENSE_QUERY_PROMPT = """
-Based off the above chat history, create a standalone version of the following question: 
+Based off the chat history, create a standalone version of the current question.
 """
 
 INFORMATION_EXTRACTION_SYSTEM_PROMPT = """
     You are a development assistant, responsible for finding and requesting information to solve the objective.
     From the provided query and existing context, you are responsible for determining what kind of further information should be gathered.
     To request further information, you can use the following four tags:
-    Codebase queries are for searching for content within the user's current codebase: <codebase>query</codebase>
-    File queries are for opening and retrieving the contents of full, complete files within the codebase: <file>filepath</file>. 
-    External queries use Google for retrieval external API documentation, consulting externally for errors, finding tools to use, etc.: <external>query</external>
+    A queries are for searching for content within the user's current codebase, such as asking for where specific method definitions are or where are specific pieces of code that complete certain functionality: <a>query</a>
+    B queries use Google for retrieval external API documentation, tutorials for solving coding problems not within the database, consulting externally for errors, finding tools to use, etc.: <b>query</b>
     Add as much context, such as programming language or framework when making requests.
     Complete all the requests you think you need at one go.
     Think step-by-step.
 
+    Your first step should be to identify all the relevant libraries that are being used by the program (such as UI libraries, networking libraries, etc.).
+    Your second step is to identify the queries you want.
+    Your third step is to identify, for each query, whether or not it will be an A or B query (state why).
+    
     Do not write any code planning or coding suggestions under any circumstances.
     You can provide multiple queries at one go.
 
 # Example conversation 1
 
-## USER: Objective: Write a python script that pulls images of buzzcuts from google images
-## ASSISTANT: <external>Python libraries for downloading google images</external> <external>Python script for downloading images from google</external>
+## USER: Objective: Write a script that pulls images of buzzcuts from google images
+Code: # Code written in Python or in a .py file...
+
+## ASSISTANT: <a>Python libraries for downloading google images</a> <a>Python script for downloading images from google</a>
+
+# Example conversation 2
+
+## USER: Objective: Find where in the code do I make network requests to the GitHub api
+## ASSISTANT: <b>network requests, GitHub</b>
+
+
     """
 
 PLANNING_SYSTEM_PROMPT = """
@@ -169,23 +181,39 @@ PLEASE DO NOT WRITE ANY CODE YOURSELF.
 Let's think step by step.
 """
 
-SNIPPET_EXTRACTION_PROMPT = """
-Each snippet of text has been assigned a number. Identify which snippets of text are most relevant to writing code that solves the provided objective.
-Extract five snippets at maximum and enclose each snippet ID separately and individually with snippet XML tags. Think step-by-step. For example an output like such:
-
-Statements there that think through the process...
-Further statements...
-<snippet>3</snippet>
-Thoughts...
-<snippet>7</snippet>
-Thoughts...
-<snippet>12</snippet>
-Thoughts...
-<snippet>14</snippet>
-Thoughts...
-<snippet>18</snippet>
+CODE_SPLIT_PROMPT = """
+Return a JSON list chunking the codebase into different sections. Reference other parts of the code when necessary. Output your response in the following format:
+```json
+[
+    {
+        "start": 0,
+        "end": 10,
+        "description": This code uses the XYZ API to do ABC and sends it over to DEF.
+    }
+]
+```
 """
 
-CODE_SPLIT_PROMPT = """
+LLM_RERANKER_PROMPT = """
+Give a relevance score for each snippet ranging from 1-10 in solving the goal of the objective. Format your response in the form of a JSON array.
+For example, you will be given a list of snippets:
+
+Example instruction:
+Objective: Find something
+# Snippets: 
+
+Snippet 1: Text 1
+Snippet 2: Text 2
+...
+
+Example output:
+```json
+[
+    {
+        "snippet_id": 1,
+        "relevance": 10
+    }
+]
+```
 
 """

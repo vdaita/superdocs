@@ -6,6 +6,7 @@ superdocs-cli/diff_management.py
 superdocs-cli/hybrid_retriever.py
 superdocs-cli/prompts.py
 superdocs-cli/repo.py
+superdocs-cli/reranker.py
 superdocs-cli/search_retrieval.py
 superdocs_cli.egg-info/PKG-INFO
 superdocs_cli.egg-info/SOURCES.txt

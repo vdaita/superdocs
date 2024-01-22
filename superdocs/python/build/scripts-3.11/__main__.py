@@ -105,27 +105,11 @@ def generate_website_documents(website: str):
         separated_documents.extend(chunk_text_with_overlap(downloaded, 500, 50))
     return separated_documents
         
-
-def self_evaluated_gpt(task, query, previous_response=None, iterations=3):
-    if not(previous_response):
-        pass
-    model_response = openai_client.chat.completions.create(
-        model=model_name,
-        messages=[{
-            "role": "system",
-            "content": task
-        },
-        ],
-        temperature=model_temperature
-    )   
-    model_response_text = model_response.choices[0].message.content
-    while not("DONE" in model_response_text):
-        return self_evaluated_gpt(task, query, previous_response, iterations=iterations-1)
-    pass
-
 def get_retrieval_tools(directory):
     def combined_search(args):
         query = args["query"]
+        if not(db["hybrid_retriever"]):
+            return "The vectorstore is not active right now."
         nodes = db["hybrid_retriever"].retrieve(query)
         reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle=QueryBundle(
             query
@@ -151,9 +135,9 @@ def get_retrieval_tools(directory):
         except:
             return f"File {closest_filepath} could not be found."
     return {
-        "external": external_search,
-        "file": read_file,
-        "codebase": combined_search
+        "b": external_search,
+        # "file": read_file,
+        "a": combined_search
     }
     # return ['external', 'semantic', 'lexical', 'file'], [external_search, semantic_search, lexical_search, read_file]
 
@@ -178,10 +162,6 @@ def extract_information_from_query(query: str, existing_content: list, directory
         {
             "role": "system",
             "content": INFORMATION_EXTRACTION_SYSTEM_PROMPT
-        },
-        {
-            "role": "user",
-            "content": f"User's current files: \n {list_non_ignored_files(directory)}"
         }
     ]
 
@@ -199,7 +179,8 @@ def extract_information_from_query(query: str, existing_content: list, directory
     response = openai_client.chat.completions.create(
         model=model_name,
         messages=messages,
-        max_tokens=512
+        max_tokens=512,
+        temperature=0.1
     )
     response_message = response.choices[0].message.content
     print("Response message: ", response_message)
@@ -215,11 +196,8 @@ def extract_information_from_query(query: str, existing_content: list, directory
             extracted_content = tool_functions[tool_name]({
                 "query": extraction
             })
-            context.append(extracted_content)
-    
-    if run_until_done:
-        if extractions_count == 0:
-            return extract_information_from_query()
+
+            context.append(extracted_content) 
 
     return context
 
@@ -316,26 +294,36 @@ def chat():
     data = request.get_json()
     directory = data["directory"]
     messages = data["messages"]
+    autoretrieve_context = data["autoretrieve_context"]
 
     context = data["context"] # Chat messages use previously retrieved context.
 
-    message_history_string = ["\n\n".join([f"${message['role'].capitalize()}: ${message['content']}" for message in messages[-8:-1]])]
-    current_question = messages[-1]["content"]
-    condense_query_response = openai_client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n {CONDENSE_QUERY_PROMPT}: {current_question}"}
-        ],
-        temperature=model_temperature,
-        max_tokens=200
-    )
-    condense_query_response = condense_query_response.choices[0].message.content
+    new_information = ""
+    
+    if autoretrieve_context:
+        message_history_string = ["\n\n".join([f"${message['role'].capitalize()}: ${message['content']}" for message in messages[-8:-1]])]
+        current_question = messages[-1]["content"]
+        condense_query_response = openai_client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": CONDENSE_QUERY_PROMPT},
+                {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n Current question:{current_question}"}
+            ],
+            temperature=model_temperature,
+            max_tokens=200
+        )
+        standalone_question = condense_query_response.choices[0].message.content
 
-    new_information = extract_information_from_query(condense_query_response, context, directory)
+        new_information = extract_information_from_query(standalone_question, context, directory)
+
+
     contextual_answer_response = openai_client.chat.completions.create(
         model=model_name,
         messages=[
-            {"role": "system", "content": QA_PROMPT}
+            {"role": "system", "content": QA_PROMPT},
+            {"role": "user", "content": str(context)},
+            {"role": "user", "content": str(new_information)},
+            {"role": "user", "content": f"Question: {standalone_question}"}
         ],
         temperature=model_temperature,
         max_tokens=300
@@ -400,21 +388,29 @@ def solve_problem():
 
     print("\n")
     print("Code blocks received: ", code_blocks)
-
-    replacements = []
-    for code_block in code_blocks:
-        replacements.extend(fuzzy_process_diff(directory, code_block))
     
-    for replacement in replacements:
-        return_messages.append({
-            "type": "changes",
-            "content": replacement
-        })
+    for code_block in code_blocks:
+        before_text = response_message.split(code_block)[0] # This splits it to Text... ```diff and ``` Rest of it, incl more diffs
+        before_text = response_message.replace("```diff", "")
+        before_text.append(response_message)
+        
+        response_message = response_message.split(code_block)[1]
+        response_message = response_message.strip()
+        response_message = response_message[3:] # Remove the ending of the diff code block.
+
+        replacements = fuzzy_process_diff(directory, code_block)
+        for replacement in replacements:
+            return_messages.append({
+                "type": "changes",
+                "content": replacement
+            })
+        replacements.extend(fuzzy_process_diff(directory, code_block))
     
     return_messages.append({
         "type": "message",
         "content": response_message
-    })
+    }) # Add whatever's at the end.
+
     print("Returning messages: ", return_messages)
     
     return {"execution": return_messages}

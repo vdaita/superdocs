@@ -15,11 +15,12 @@ from langchain.schema import StrOutputParser, HumanMessage, SystemMessage, AIMes
 from langchain.chains.summarize import load_summarize_chain
 
 from llama_index.schema import Node, QueryBundle, NodeWithScore
-from llama_index.postprocessor import LLMRerank
 from llama_index import ServiceContext
 from llama_index.llms import OpenAI
 
-from .prompts import SNIPPET_EXTRACTION_PROMPT
+from ragatouille import RAGPretrainedModel
+
+from .reranker import LLMReranker
 
 import re
 
@@ -40,28 +41,41 @@ def extract_content(text, tag):
     return matches
 
 def summary(objective, content, api_key, base_url, model_name):
+    # try: 
     split_content = extractive_text_splitter.split_text(content)
-    split_content_nodes = [Node(text=text) for text in split_content]
-    split_content_nodes = [NodeWithScore(node=node, score=1) for node in split_content_nodes]
+    print(len(split_content), split_content[0])
 
-    print(len(split_content_nodes), split_content_nodes[0])
+    reranker = LLMReranker(api_key, base_url, model_name)
+    snippets_with_score = reranker.rerank(split_content, objective, 7)
+    print("------------- EXTRACTED MOST RELEVANT CONTENT --------------")
+    print("Received snippets with scores: ", snippets_with_score)
 
-    llm = OpenAI(model=model_name, temperature=0, base_url=base_url, api_key=api_key)
-    service_context = ServiceContext.from_defaults(llm=llm, chunk_size=512)
+    return f"# Extracted snippets for objective {objective} \n \n " + str(snippets_with_score)
+    # llm = OpenAI(model=model_name, temperature=0, base_url=base_url, api_key=api_key)
+    # service_context = ServiceContext.from_defaults(llm=llm, chunk_size=512)
     
-    query_bundle = QueryBundle(objective)
-    reranker = LLMRerank(
-        choice_batch_size=5,
-        top_n=7,
-        service_context=service_context
-    )
-    retriever_nodes = reranker.postprocess_nodes(
-        split_content_nodes, query_bundle
-    )
+    # query_bundle = QueryBundle(objective)
+    # reranker = LLMRerank(
+    #     choice_batch_size=5,
+    #     top_n=7,
+    #     service_context=service_context
+    # )
+    # retriever_nodes = reranker.postprocess_nodes(
+    #     split_content_nodes, query_bundle
+    # )
 
-    nodes_string = "\n".join([f"## Snippet {i}: {node.text}" for i, node in enumerate(retriever_nodes)])
-    return f"# Relevant snippets for {objective}: \n \n {nodes_string}"
-    
+    # nodes_string = "\n".join([f"## Snippet {i}: {node.text}" for i, node in enumerate(retriever_nodes)])
+    # return f"# Relevant snippets for {objective}: \n \n {nodes_string}"
+    # except:
+    #     RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+    #     index = RAG.index(
+    #         collection=[content],
+    #         max_document_length=400,
+    #         split_documents=True
+    #     )
+    #     results = index.search(query=objective, k=7)
+    #     nodes_string = "\n".join([f"## Snippet {i}: {node['content']}" for i, node in enumerate(results)])
+    #     return f"# Relevant snippets for {objective}: \n \n \n {nodes_string}"
 
 def retrieve_content(question: str, api_key: str, base_url: str, model_name: str):
     # identify 
