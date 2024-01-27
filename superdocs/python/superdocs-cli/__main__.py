@@ -197,7 +197,10 @@ def extract_information_from_query(query: str, existing_content: list, directory
                 "query": extraction
             })
 
-            context.append(extracted_content) 
+            if type(extracted_content) == list:
+                context.extend(extracted_content)
+            else:
+                context.append(extracted_content)
 
     return context
 
@@ -289,56 +292,6 @@ def break_down_problem():
 
     return {"plan": response_message}
 
-@app.post("/chat")
-def chat():
-    data = request.get_json()
-    directory = data["directory"]
-    messages = data["messages"]
-    autoretrieve_context = data["autoretrieve_context"]
-
-    context = data["context"] # Chat messages use previously retrieved context.
-
-    new_information = ""
-    
-    if autoretrieve_context:
-        message_history_string = ["\n\n".join([f"${message['role'].capitalize()}: ${message['content']}" for message in messages[-8:-1]])]
-        current_question = messages[-1]["content"]
-        condense_query_response = openai_client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": CONDENSE_QUERY_PROMPT},
-                {"role": "user", "content": f"Chat history: {message_history_string} \n \n \n Current question:{current_question}"}
-            ],
-            temperature=model_temperature,
-            max_tokens=200
-        )
-        standalone_question = condense_query_response.choices[0].message.content
-
-        new_information = extract_information_from_query(standalone_question, context, directory)
-
-
-    contextual_answer_response = openai_client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {"role": "system", "content": QA_PROMPT},
-            {"role": "user", "content": str(context)},
-            {"role": "user", "content": str(new_information)},
-            {"role": "user", "content": f"Question: {standalone_question}"}
-        ],
-        temperature=model_temperature,
-        max_tokens=300
-    )
-    contextual_answer = contextual_answer_response.choices[0].message.content
-
-    return {
-        "context": new_information,
-        "answer": {
-            "role": "assistant",
-            "content": contextual_answer
-        }
-    }
-
-
 @app.post("/execute")
 def solve_problem():
     global model_name
@@ -380,8 +333,8 @@ def solve_problem():
 
     return_messages = []
 
-    print("Received response: ", response)
     response_message = response.choices[0].message.content
+    print("Received response: ", response_message)
 
     # response_message = test_response
     code_blocks = extract_diff_code_blocks(response_message)
@@ -392,7 +345,10 @@ def solve_problem():
     for code_block in code_blocks:
         before_text = response_message.split(code_block)[0] # This splits it to Text... ```diff and ``` Rest of it, incl more diffs
         before_text = response_message.replace("```diff", "")
-        before_text.append(response_message)
+        return_messages.append({
+            "type": "message",
+            "content": f"**Message** \n {before_text}"
+        })
         
         response_message = response_message.split(code_block)[1]
         response_message = response_message.strip()
