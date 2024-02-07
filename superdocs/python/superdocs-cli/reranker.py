@@ -5,7 +5,34 @@ import re
 import json
 import tiktoken
 
+from ragatouille import RAGPretrainedModel
+
 encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+
+RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+
+class RagatouilleReranker():
+    def rerank(self, contents, objective, output_count, combine_output=True):
+        if output_count > len(contents):
+            if combine_output:
+                results = ["------\n".join([snippet for snippet in contents])]
+                return results
+            return contents
+            
+
+        results = RAG.rerank(query=objective, documents=contents, k=output_count)
+
+        print("ColBERT reranker result: ", results)
+
+        results = [(result["content"], result["result_index"]) for result in results]
+        results = sorted(results, key=lambda x: x[1])
+        results = [result[0] for result in results]
+        
+        if combine_output:
+            results = ["-----\n".join([result for result in results])]
+
+        return results
+
 
 class LLMReranker():
 

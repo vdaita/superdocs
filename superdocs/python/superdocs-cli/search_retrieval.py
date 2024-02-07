@@ -18,14 +18,16 @@ from llama_index.schema import Node, QueryBundle, NodeWithScore
 from llama_index import ServiceContext
 from llama_index.llms import OpenAI
 
-from ragatouille import RAGPretrainedModel
+from .reranker import LLMReranker, RagatouilleReranker
 
-from .reranker import LLMReranker
+from transformers import pipeline
 
 import re
 
 text_splitter = TokenTextSplitter(chunk_size=3000, chunk_overlap=500)
 extractive_text_splitter = TokenTextSplitter(chunk_size=500, chunk_overlap=100)
+
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 def join_texts(texts: List[str]) -> str:
     return "\n\n".join(text for text in texts)
@@ -36,16 +38,26 @@ def extract_content(text, tag):
     return matches
 
 def summary(objective, content, api_key, base_url, model_name):
+    article_string = f"# Content relating to solving {objective} \n \n {content}"
+
     # try: 
-    split_content = extractive_text_splitter.split_text(content)
-    print(len(split_content), split_content[0])
+    # split_content = extractive_text_splitter.split_text(content)
+    # print(len(split_content), split_content[0])
 
-    reranker = LLMReranker(api_key, base_url, model_name)
-    snippets_with_score = reranker.rerank(split_content, objective, 7, 4)
+    # reranker = LLMReranker(api_key, base_url, model_name)
+    # reranker = RagatouilleReranker()
+
+    # snippets_with_score = reranker.rerank(split_content, objective, 7, 4)
+    # snippets = reranker.rerank(split_content, objective, 5)
+
+    summarized = summarizer(content, max_length=1000, min_length=100, do_sample=False)
+    summarized = [summarized[0]["summary_text"]]
+
     print("------------- EXTRACTED MOST RELEVANT CONTENT --------------")
-    print("Received snippets with scores: ", snippets_with_score)
+    print("Received snippets with scores: ", [summarized])
 
-    return [f"Snippet extracted for objective: {objective} \n \n {snippet[0]}" for snippet in snippets_with_score]
+    # return [f"Snippet extracted for objective: {objective} \n \n {snippet[0]}" for snippet in snippets_with_score]
+    return summarized
 
 def retrieve_content(question: str, api_key: str, base_url: str, model_name: str):
     # identify 
