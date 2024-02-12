@@ -15,21 +15,19 @@ from langchain.schema import StrOutputParser, HumanMessage, SystemMessage, AIMes
 from langchain.chains.summarize import load_summarize_chain
 
 from llama_index.schema import Node, QueryBundle, NodeWithScore
-from llama_index.postprocessor import LLMRerank
 from llama_index import ServiceContext
 from llama_index.llms import OpenAI
 
-from .prompts import SNIPPET_EXTRACTION_PROMPT
+from .reranker import LLMReranker, RagatouilleReranker
+
+from transformers import pipeline
 
 import re
 
 text_splitter = TokenTextSplitter(chunk_size=3000, chunk_overlap=500)
-extractive_text_splitter = TokenTextSplitter(chunk_size=400, chunk_overlap=0)
+extractive_text_splitter = TokenTextSplitter(chunk_size=500, chunk_overlap=100)
 
-# retrieval_function = {
-#     "name": "retrieve_documentation_and_search",
-#     "description": 
-# }
+summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
 
 def join_texts(texts: List[str]) -> str:
     return "\n\n".join(text for text in texts)
@@ -40,32 +38,30 @@ def extract_content(text, tag):
     return matches
 
 def summary(objective, content, api_key, base_url, model_name):
-    split_content = extractive_text_splitter.split_text(content)
-    split_content_nodes = [Node(text=text) for text in split_content]
-    split_content_nodes = [NodeWithScore(node=node, score=1) for node in split_content_nodes]
+    article_string = f"# Content relating to solving {objective} \n \n {content}"
 
-    print(len(split_content_nodes), split_content_nodes[0])
+    # try: 
+    # split_content = extractive_text_splitter.split_text(content)
+    # print(len(split_content), split_content[0])
 
-    llm = OpenAI(model=model_name, temperature=0, base_url=base_url, api_key=api_key)
-    service_context = ServiceContext.from_defaults(llm=llm, chunk_size=512)
-    
-    query_bundle = QueryBundle(objective)
-    reranker = LLMRerank(
-        choice_batch_size=5,
-        top_n=7,
-        service_context=service_context
-    )
-    retriever_nodes = reranker.postprocess_nodes(
-        split_content_nodes, query_bundle
-    )
+    # reranker = LLMReranker(api_key, base_url, model_name)
+    # reranker = RagatouilleReranker()
 
-    nodes_string = "\n".join([f"## Snippet {i}: {node.text}" for i, node in enumerate(retriever_nodes)])
-    return f"# Relevant snippets for {objective}: \n \n {nodes_string}"
-    
+    # snippets_with_score = reranker.rerank(split_content, objective, 7, 4)
+    # snippets = reranker.rerank(split_content, objective, 5)
+
+    summarized = summarizer(content, max_length=1000, min_length=100, do_sample=False)
+    summarized = [summarized[0]["summary_text"]]
+
+    print("------------- EXTRACTED MOST RELEVANT CONTENT --------------")
+    print("Received snippets with scores: ", [summarized])
+
+    # return [f"Snippet extracted for objective: {objective} \n \n {snippet[0]}" for snippet in snippets_with_score]
+    return summarized
 
 def retrieve_content(question: str, api_key: str, base_url: str, model_name: str):
     # identify 
-    results = search(question, num_results=3, advanced=True, timeout=5)
+    results = search(question, num_results=2, advanced=True, timeout=5)
     combined_text = ""
     for result in results:
         response = requests.get(result.url)

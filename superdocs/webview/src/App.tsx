@@ -12,6 +12,7 @@ import ReactJson from 'react-json-view';
 import { notifications } from '@mantine/notifications';
 import { toast } from 'react-toastify';
 import ReactDiffViewer from 'react-diff-viewer';
+import { createTwoFilesPatch } from 'diff';
 
 let serverUrl = "http://127.0.0.1:8123/"
 
@@ -124,7 +125,10 @@ function App() {
           messages.push(response.data.execution[i].content);
         } else if (response.data.execution[i].type == "changes") {
           console.log("Change: ", response.data.execution[i].content);
-          changes.push(response.data.execution[i].content);
+          let executionContent = response.data.execution[i].content;
+          executionContent["filepath"] = directory + "/" + executionContent["filepath"];
+          executionContent["filepath"].replace("//", "/");
+          changes.push(executionContent);
         } 
       }
 
@@ -248,6 +252,11 @@ function App() {
     setLoading(false);
   }
 
+  let addDiffToContext = async (startingFilepath: string, endingFilepath: string, oldString: string, newString: string) => {
+    let patch: string = createTwoFilesPatch(startingFilepath, endingFilepath, oldString, newString);
+    setContext([...context, `# Diff generated: \n \n ${patch}`])
+  }
+
   return (
     <Container py='lg' px='md'>
       <Tabs defaultValue="chat">
@@ -293,9 +302,9 @@ function App() {
               <Accordion.Item key="plan" value="plan">
                 <Accordion.Control>📋 plan</Accordion.Control>
                 <Accordion.Panel>
-                  <Textarea placeholder="The plan will be here and you can edit it" value={plan} onChange={(e) => setPlan(e.target.value)} rows={10}/>
+                  <Textarea placeholder="Edit the plan" value={plan} onChange={(e) => setPlan(e.target.value)} rows={10}/>
               
-
+                  <Button onClick={() => setPlan(objective ? objective : "")}>Set Plan to Objective</Button>
                   <Button onClick={() => sendPlanCreationRequest()}>Create Plan from context and objective</Button>
                 </Accordion.Panel>
               </Accordion.Item>
@@ -303,15 +312,16 @@ function App() {
                 <Accordion.Control>📝 execution</Accordion.Control>
                 <Accordion.Panel>
 
-                <Text>Set execution custom token limit (currently disabled):</Text>
+                <Text>Set execution custom token limit (currently disablexd):</Text>
                 <TextInput disabled={true} onChange={(e) => setTokenLimit(e.target.value)} value={tokenLimit}></TextInput>
-
-
                   {executionChanges.length}
                   {executionChanges.map((item, index) => (
                     <Box key={index}>
                       {/* <Text>{JSON.stringify(item)}</Text> */}
                       <Badge size="xl" variant="gradient">{item.old.length > 0 ? "Replacement" : "Write"}</Badge>
+                      <Button onClick={() => addDiffToContext(item.old.length > 0 ? item.filepath : "/dev/null", item.filepath, item.old, item.new)}>
+                        Add Diff to Context
+                      </Button>
                       <Text style={{fontWeight: 'bold'}}>Filepath: {item.filepath}</Text>
                       <ReactDiffViewer oldValue={item.old} newValue={item.new}></ReactDiffViewer>
                       {item.old.length > 0 && <Button onClick={() => VSCodeMessage.postMessage({type: "replaceSnippet", content: {originalCode: item.old, newCode: item.new, filepath: item.filepath}})}>Make Replacement</Button>}
@@ -326,14 +336,10 @@ function App() {
                   <Button onClick={() => sendExecutorMessage()}>Create execution based on plan</Button>
                 </Accordion.Panel>
               </Accordion.Item>
-              <Accordion.Item key="chat" value="chat">
-                <Accordion.Control>💬 chat</Accordion.Control>
+              <Accordion.Item key="history" value="history">
+                <Accordion.Control>📖 history</Accordion.Control>
                 <Accordion.Panel>
-                  {messages.map((item, index) => (
-                    <EnhancedMarkdown message={item}/>
-                  ))}
-                  <Button onClick={() => sendChatMessage(true)}>Send message + retrieve context</Button>
-                  <Button onClick={() => sendChatMessage(false)}>Send message with existing context</Button>
+                    <Text>TODO: Implement history for requests</Text>
                 </Accordion.Panel>
               </Accordion.Item>
             </Accordion>

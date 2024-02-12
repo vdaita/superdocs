@@ -93,7 +93,7 @@ export default function EnhancedMarkdown({ message }) {
                                     } catch (e) {
                                         // continue on
                                     }
-                                }    
+                                }
                             }
 
                             return match ? (

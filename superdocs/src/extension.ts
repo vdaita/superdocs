@@ -187,8 +187,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	
 		const isProduction = context.extensionMode === vscode.ExtensionMode.Production;
 		if (isProduction) {
-			scriptUrl = this._view?.webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'dist', jsFile))).toString()!;
-			cssUrl = this._view?.webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'dist', cssFile))).toString()!;
+			scriptUrl = this._view?.webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'webview', 'build', jsFile))).toString()!;
+			cssUrl = this._view?.webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'webview', 'build', cssFile))).toString()!;
 		} else {
 			scriptUrl = `${localServerUrl}/${jsFile}`; 
 		}
