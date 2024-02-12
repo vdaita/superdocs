@@ -19,3 +19,5 @@ Requires-Dist: unidiff
 Requires-Dist: rank-bm25==0.2.2
 Requires-Dist: llama-index==0.9.27
 Requires-Dist: nltk==3.8.1
+Requires-Dist: rapidfuzz==3.6.1
+Requires-Dist: tqdm==4.66.1

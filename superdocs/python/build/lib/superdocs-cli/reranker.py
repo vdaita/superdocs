@@ -3,6 +3,36 @@ import random
 from .prompts import LLM_RERANKER_PROMPT
 import re
 import json
+import tiktoken
+
+from ragatouille import RAGPretrainedModel
+
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+
+RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+
+class RagatouilleReranker():
+    def rerank(self, contents, objective, output_count, combine_output=True):
+        if output_count > len(contents):
+            if combine_output:
+                results = ["------\n".join([snippet for snippet in contents])]
+                return results
+            return contents
+            
+
+        results = RAG.rerank(query=objective, documents=contents, k=output_count)
+
+        print("ColBERT reranker result: ", results)
+
+        results = [(result["content"], result["result_index"]) for result in results]
+        results = sorted(results, key=lambda x: x[1])
+        results = [result[0] for result in results]
+        
+        if combine_output:
+            results = ["-----\n".join([result for result in results])]
+
+        return results
+
 
 class LLMReranker():
 
@@ -17,15 +47,22 @@ class LLMReranker():
         json_code_blocks = re.findall(pattern, md_text, re.MULTILINE)
         return json_code_blocks
     
-    def rerank(self, contents, objective, output_count): 
+    def rerank(self, contents, objective, output_count, process_chunk_count): 
         # random.shuffle(contents)
         scored_snippets = []
 
-        for range_start in range(0, len(contents), 10):
-            range_end = max(range_start + 10, len(contents))
+        for range_start in range(0, len(contents), process_chunk_count):
+            range_end = max(range_start + process_chunk_count, len(contents))
             contents_range = contents[range_start:range_end]
 
             snippets_string = "\n".join([f"\n ### Snippet {index + 1}: \n \n {contents}" for index, contents in enumerate(contents_range)])
+
+            reranker_prompt_size = len(encoding.encode(LLM_RERANKER_PROMPT))
+            objective_prompt_size  = len(encoding.encode(objective))
+            snippets_prompt_size = len(encoding.encode(snippets_string))
+
+            print("Sending over a request with ", reranker_prompt_size, " + ", objective_prompt_size,  " + ", snippets_prompt_size)
+
             response = self.openai.chat.completions.create(
                 messages=[
                     {
@@ -62,12 +99,14 @@ class LLMReranker():
                     if type(relevance) is str:
                         relevance = int(relevance)
                     
-                    if snippet_id < 0 or snippet_id >= len(contents_range):
+                    if snippet_id >= 0 and snippet_id < len(contents_range):
                         snippet_text = contents_range[snippet_id - 1]
                         scored_snippets.append((snippet_text, relevance))
         
         scored_snippets = sorted(scored_snippets, key=lambda x: x[1])
         scored_snippets = list(reversed(scored_snippets))
+
+        print("Length of all scored_snippets: ", len(scored_snippets))
 
         return scored_snippets[:min(output_count, len(scored_snippets))]
 

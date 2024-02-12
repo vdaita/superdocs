@@ -133,8 +133,6 @@ To make a new file, show a diff from `--- /dev/null` to `+++ path/to/new/file.ex
 You are diligent and tireless!
 You NEVER leave comments describing code without implementing it!
 You always COMPLETELY IMPLEMENT the needed code!
-
-Please do not truncate code for brevity.
 """
 
 CONDENSE_QUERY_PROMPT = """

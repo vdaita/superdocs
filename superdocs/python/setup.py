@@ -21,7 +21,9 @@ setup(
         "unidiff",
         "rank-bm25==0.2.2",
         "llama-index==0.9.27",
-        "nltk==3.8.1"
+        "nltk==3.8.1",
+        "rapidfuzz==3.6.1",
+        "tqdm==4.66.1"
     ],
     scripts=["./superdocs-cli/__main__.py"],
     packages=["superdocs-cli"],

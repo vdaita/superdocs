@@ -100,6 +100,8 @@ Return edits similar to unified diffs that `diff -U0` would produce.
 Make sure you include the first 2 lines with the file paths.
 Don't include timestamps with the file paths.
 
+Include headers, top-level variable definitions, imports, etc.
+
 Start each hunk of changes with a `@@ ... @@` line.
 Don't include line numbers like `diff -U0` does.
 The user's patch tool doesn't need them.

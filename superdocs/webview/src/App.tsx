@@ -125,7 +125,10 @@ function App() {
           messages.push(response.data.execution[i].content);
         } else if (response.data.execution[i].type == "changes") {
           console.log("Change: ", response.data.execution[i].content);
-          changes.push(response.data.execution[i].content);
+          let executionContent = response.data.execution[i].content;
+          executionContent["filepath"] = directory + "/" + executionContent["filepath"];
+          executionContent["filepath"].replace("//", "/");
+          changes.push(executionContent);
         } 
       }
 
