@@ -5,11 +5,12 @@ import EnhancedMarkdown from './lib/EnhancedMarkdown';
 
 import MDEditor from '@uiw/react-md-editor';
 import Replacement from './lib/Replacement';
+import { VSCodeMessage } from './lib/VSCodeMessage';
 
 let serverUrl = "http://127.0.0.1:8123/"
 
 function App() {
-  const [query, setQuery] = useState(""); // this should be the user's inputs
+  const [query, setQuery] = useState("# Query"); // this should be the user's inputs
   const [snippets, setSnippets] = useState<string[]>([]); // these should be the snippets
 
   const [changes, setChanges] = useState([]);
@@ -21,6 +22,22 @@ function App() {
   });
 
   const SPLIT_TOKEN = "------";
+
+  useEffect(() => {
+    VSCodeMessage.onMessage((message) => {
+      console.log("Received message: ", message)
+      let content = message.data.content;
+      let type = message.data.type;
+      if (type == "snippet") {
+        const directory = "";
+        let relativeFilepath = content.filepath.replace(directory, "")
+        let snippetText = `Filepath: ${relativeFilepath} \n \`\`\`${content.language} \n ${content.code} \n \`\`\``;
+
+        console.log("Received snippet with information: ", directory, relativeFilepath, snippetText, directory)
+        setSnippets([...snippets, snippetText]);
+      }
+    });
+  }, []);
 
   let execute = async () => {
     let response = await fetch(`${serverUrl}/process`, {
@@ -117,7 +134,11 @@ function App() {
 
   return (
     <Container>
-      <MDEditor onChange={(e) => setQuery(e!)} value={query} placeholder="Query"></MDEditor>
+      <MDEditor onChange={(e) => setQuery(e!)} value={query}></MDEditor>
+      <Button onClick={() => execute()}>Execute</Button>
+
+      <Text size="3xl">Snippets</Text>
+      {snippets.length == 0 && <Text>No snippets have been added yet. Add a snippet for us to be able to establish your current directory.</Text>}
       {snippets.map((item, index) => (
         <Box>
           <Button onClick={() => deleteSnippet(index)}>Delete Snippet</Button>
@@ -128,11 +149,10 @@ function App() {
         </Box>
       ))}
 
-      <Button onClick={() => execute()}>Execute</Button>
 
       <Text>{backendMessage}</Text>
       {currentVariable["name"].length > 0 && <Box>
-        <Text size="lg">{currentVariable["name"]}</Text>
+        <Text size="xl" fw={700}>{currentVariable["name"]}</Text>
         <MDEditor 
           value={currentVariable["value"]} 
           onChange={(e) => setCurrentVariable({...currentVariable, "value": e!})}>
