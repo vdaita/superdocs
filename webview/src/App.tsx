@@ -6,6 +6,7 @@ import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import MDEditor from '@uiw/react-md-editor';
 import Replacement from './lib/Replacement';
 import { VSCodeMessage } from './lib/VSCodeMessage';
+import { toast } from 'react-toastify';
 
 let serverUrl = "http://127.0.0.1:8123/"
 
@@ -20,6 +21,9 @@ function App() {
     "name": "",
     "value": ""
   });
+
+  const [errorMessage, setErrorMessage] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const [directory, setDirectory] = useState("");
 
@@ -47,46 +51,63 @@ function App() {
   }, []);
 
   let execute = async () => {
-    let response = await fetch(`${serverUrl}/process`, {
-      body: JSON.stringify({
-        query: query,
-        snippets: snippets
-      })
-    });
-    let decoder = new TextDecoder();
-    let reader = response.body!.getReader();
+    setLoading(true);
+    setErrorMessage("");
 
-    while(true){
-      const {done, value} = await reader.read();
-      
-      let newData = JSON.parse(decoder.decode(value));
-
-      if(newData["type"] === "information"){
-        setBackendMessage(backendMessage + "\n" + newData["content"]);
-      } else if (newData["type"] === "context") {
-        let generatedContext = newData["content"].split(SPLIT_TOKEN);
-        setSnippets(generatedContext);
-        setCurrentVariable({
-          "name": "context",
-          "value": "# Send approved context"
-        });
-      } else if (newData["type"] === "plan") {
-        setCurrentVariable({
-          "name": "plan",
-          "value": newData["content"]
-        });
-      } else if (newData["type"] === "changes") {
-        setChanges(newData["content"]);
-        setCurrentVariable({
-          "name": "changes",
-          "value": "# Approve by running execute or change this value"
-        });
+    try {
+      let response = await fetch(`${serverUrl}/process`, {
+        body: JSON.stringify({
+          query: query,
+          snippets: snippets
+        }),
+        method: 'POST'
+      });
+  
+      if(!response.ok) {
+        setErrorMessage(`${response.status}: ${response.statusText}`);
+        setLoading(false);
       }
-      
-      if(done){
-        break;
-      }
+  
+      let decoder = new TextDecoder();
+      let reader = response.body!.getReader();
+  
+      while(true){
+        const {done, value} = await reader.read();
+        
+        let newData = JSON.parse(decoder.decode(value));
+  
+        if(newData["type"] === "information"){
+          setBackendMessage(backendMessage + "\n" + newData["content"]);
+        } else if (newData["type"] === "context") {
+          let generatedContext = newData["content"].split(SPLIT_TOKEN);
+          setSnippets(generatedContext);
+          setCurrentVariable({
+            "name": "context",
+            "value": "# Send approved context"
+          });
+        } else if (newData["type"] === "plan") {
+          setCurrentVariable({
+            "name": "plan",
+            "value": newData["content"]
+          });
+        } else if (newData["type"] === "changes") {
+          setChanges(newData["content"]);
+          setCurrentVariable({
+            "name": "changes",
+            "value": "# Approve by running execute or change this value"
+          });
+        }
+        
+        if(done){
+          break;
+        }
+      } 
+    } catch (e) {
+      console.error(e);
+      setErrorMessage("Failed to fetch. Is the server running?");
     }
+
+    setLoading(false);
   }
 
   let sendUpdate = async () => {
@@ -155,6 +176,14 @@ function App() {
           </details>
         </Card>
       ))}
+
+      {errorMessage && <Card shadow="sm" padding="lg" radius="md" withBorder bg="red">
+        {errorMessage}
+      </Card>}
+
+      {loading && <Card>
+        Superdocs is loading...
+      </Card>}
 
 
       <Text>{backendMessage}</Text>
