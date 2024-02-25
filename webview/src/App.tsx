@@ -1,6 +1,6 @@
 import React, {useState, useEffect} from 'react';
 import './App.css';
-import { Container, Card, Textarea, Group, Button, Box, Badge, Loader, Tabs, Text, Checkbox, TextInput, ScrollArea, Accordion, Paper} from "@mantine/core"
+import { Container, Card, Textarea, Title, Group, Button, Box, Badge, Loader, Tabs, Text, Checkbox, TextInput, ScrollArea, Accordion, Paper} from "@mantine/core"
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 
 import MDEditor from '@uiw/react-md-editor';
@@ -21,6 +21,8 @@ function App() {
     "value": ""
   });
 
+  const [directory, setDirectory] = useState("");
+
   const SPLIT_TOKEN = "------";
 
   useEffect(() => {
@@ -29,12 +31,17 @@ function App() {
       let content = message.data.content;
       let type = message.data.type;
       if (type == "snippet") {
-        const directory = "";
-        let relativeFilepath = content.filepath.replace(directory, "")
+        const directory = content.directory;
+        let relativeFilepath = content.filepath.replace(directory, "");
+        if(relativeFilepath.startsWith("/")) {
+          relativeFilepath = relativeFilepath.substring(1, relativeFilepath.length);
+        }
+
         let snippetText = `Filepath: ${relativeFilepath} \n \`\`\`${content.language} \n ${content.code} \n \`\`\``;
 
         console.log("Received snippet with information: ", directory, relativeFilepath, snippetText, directory)
         setSnippets([...snippets, snippetText]);
+        setDirectory(directory);
       }
     });
   }, []);
@@ -137,16 +144,16 @@ function App() {
       <MDEditor onChange={(e) => setQuery(e!)} value={query}></MDEditor>
       <Button onClick={() => execute()}>Execute</Button>
 
-      <Text size="3xl">Snippets</Text>
+      <Title order={1}>Snippets</Title>
       {snippets.length == 0 && <Text>No snippets have been added yet. Add a snippet for us to be able to establish your current directory.</Text>}
       {snippets.map((item, index) => (
-        <Box>
+        <Card shadow="sm" padding="lg" radius="md" withBorder>
           <Button onClick={() => deleteSnippet(index)}>Delete Snippet</Button>
           <details>
             <summary>{item.split("\n")[0]}</summary>
             <MDEditor onChange={(e) => changeSnippetValue(e!, index)} value={item}/>
           </details>
-        </Box>
+        </Card>
       ))}
 
 
