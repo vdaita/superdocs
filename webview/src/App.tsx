@@ -7,8 +7,9 @@ import MDEditor from '@uiw/react-md-editor';
 import Replacement from './lib/Replacement';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { toast } from 'react-toastify';
+import axios from 'axios';
 
-let serverUrl = "http://127.0.0.1:8123/"
+let serverUrl = "http://127.0.0.1:8125/"
 
 function App() {
   const [query, setQuery] = useState("# Query"); // this should be the user's inputs
@@ -55,15 +56,22 @@ function App() {
     setErrorMessage("");
 
     try {
+      const stringifiedSnippets = snippets.join("\n" + SPLIT_TOKEN + "\n");
+
       let response = await fetch(`${serverUrl}/process`, {
-        body: JSON.stringify({
-          query: query,
-          snippets: snippets
-        }),
-        method: 'POST'
-      });
+          body: JSON.stringify({
+            directory: directory,
+            objective: query,
+            snippets: stringifiedSnippets
+          }),
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        },
+      );
   
-      if(!response.ok) {
+      if(!(response.status == 200)) {
         setErrorMessage(`${response.status}: ${response.statusText}`);
         setLoading(false);
       }
@@ -73,30 +81,41 @@ function App() {
   
       while(true){
         const {done, value} = await reader.read();
+        const decodedValue = decoder.decode(value);
+        let chunks = decodedValue.split("<sddlm>");
+
+        console.log("Received values: ", done, chunks);
         
-        let newData = JSON.parse(decoder.decode(value));
+        chunks.map((chunk) => { // wrap in a try-except
+
+          if(chunk.length < 5){
+            return;
+          }
+
+          let newData = JSON.parse(chunk);
   
-        if(newData["type"] === "information"){
-          setBackendMessage(backendMessage + "\n" + newData["content"]);
-        } else if (newData["type"] === "context") {
-          let generatedContext = newData["content"].split(SPLIT_TOKEN);
-          setSnippets(generatedContext);
-          setCurrentVariable({
-            "name": "context",
-            "value": "# Send approved context"
-          });
-        } else if (newData["type"] === "plan") {
-          setCurrentVariable({
-            "name": "plan",
-            "value": newData["content"]
-          });
-        } else if (newData["type"] === "changes") {
-          setChanges(newData["content"]);
-          setCurrentVariable({
-            "name": "changes",
-            "value": "# Approve by running execute or change this value"
-          });
-        }
+          if(newData["type"] === "information"){
+            setBackendMessage(backendMessage + "\n" + newData["content"]);
+          } else if (newData["type"] === "context") {
+            let generatedContext = newData["content"].split(SPLIT_TOKEN);
+            setSnippets(generatedContext);
+            setCurrentVariable({
+              "name": "context",
+              "value": "# Send approved context"
+            });
+          } else if (newData["type"] === "plan") {
+            setCurrentVariable({
+              "name": "plan",
+              "value": newData["content"]
+            });
+          } else if (newData["type"] === "changes") {
+            setChanges(newData["content"]);
+            setCurrentVariable({
+              "name": "changes",
+              "value": "# Approve by running execute or change this value"
+            });
+          }
+        })
         
         if(done){
           break;
@@ -104,7 +123,7 @@ function App() {
       } 
     } catch (e) {
       console.error(e);
-      setErrorMessage("Failed to fetch. Is the server running?");
+      setErrorMessage("There was an error.");
     }
 
     setLoading(false);
@@ -123,13 +142,11 @@ function App() {
       }
     }
 
-    let response = await fetch(`${serverUrl}/send_response`, {
-      body: JSON.stringify({
-        "message": valueToSend
-      })
+    let response = await axios.post(`${serverUrl}/send_response`, {
+      "message": valueToSend
     });
 
-    if(response.ok){
+    if(response.status == 200){
       console.log("The current statement has been processed by the backend.");
       setCurrentVariable({
         name: "",
@@ -162,6 +179,10 @@ function App() {
 
   return (
     <Container>
+      {!directory.length && <Text>Send a snippet to set the current working directory of your editor.</Text>}
+
+      {directory.length && <Text>Current directory: {directory}</Text>}
+
       <MDEditor onChange={(e) => setQuery(e!)} value={query}></MDEditor>
       <Button onClick={() => execute()}>Execute</Button>
 
@@ -169,9 +190,9 @@ function App() {
       {snippets.length == 0 && <Text>No snippets have been added yet. Add a snippet for us to be able to establish your current directory.</Text>}
       {snippets.map((item, index) => (
         <Card shadow="sm" padding="lg" radius="md" withBorder>
-          <Button onClick={() => deleteSnippet(index)}>Delete Snippet</Button>
           <details>
-            <summary>{item.split("\n")[0]}</summary>
+            <Button onClick={() => deleteSnippet(index)} variant="outline">Delete Snippet</Button>
+            <summary>{item.trimStart().split("\n")[0]}</summary>
             <MDEditor onChange={(e) => changeSnippetValue(e!, index)} value={item}/>
           </details>
         </Card>
