@@ -132,7 +132,8 @@ function App() {
   let sendUpdate = async () => {
     let valueToSend = currentVariable["value"];
     if(currentVariable["name"] == "context"){
-      valueToSend = changes.join(SPLIT_TOKEN);
+      const stringifiedSnippets = snippets.join("\n" + SPLIT_TOKEN + "\n");
+      valueToSend = stringifiedSnippets;
     } else if (currentVariable["name"] === "changes") {
       let approvedString = "# Approve by running execute or change this value";
       if(currentVariable["value"] == approvedString) {
@@ -141,6 +142,8 @@ function App() {
         valueToSend = "NOT";
       }
     }
+
+    console.log("Sending information: ", valueToSend);
 
     let response = await axios.post(`${serverUrl}/send_response`, {
       "message": valueToSend
@@ -191,7 +194,7 @@ function App() {
       {snippets.map((item, index) => (
         <Card shadow="sm" padding="lg" radius="md" withBorder>
           <details>
-            <Button onClick={() => deleteSnippet(index)} variant="outline">Delete Snippet</Button>
+            <Button onClick={() => deleteSnippet(index)} variant="outline" mb='sm'>Delete Snippet</Button>
             <summary>{item.trimStart().split("\n")[0]}</summary>
             <MDEditor onChange={(e) => changeSnippetValue(e!, index)} value={item}/>
           </details>
