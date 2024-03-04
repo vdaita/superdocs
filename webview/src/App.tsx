@@ -4,18 +4,36 @@ import { Container, Card, Textarea, Title, Group, Button, Box, Badge, Loader, Ta
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 
 import MDEditor from '@uiw/react-md-editor';
-import Replacement from './lib/Replacement';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { toast } from 'react-toastify';
 import axios from 'axios';
+import ReactDiffViewer from 'react-diff-viewer';
 
 let serverUrl = "http://127.0.0.1:8125/"
+
+interface Change {
+  search: string;
+  replace: string;
+  filepath: string;
+}
+
+let extractXMLContents = (inputText: string, tagName: string) => {
+  const regex = new RegExp(`<${tagName}>(.*?)<\/${tagName}>`, 'gs');
+  const matches = [];
+  let match;
+
+  while ((match = regex.exec(inputText)) !== null) {
+      matches.push(match[1]);
+  }
+
+  return matches;
+}
 
 function App() {
   const [query, setQuery] = useState("# Query"); // this should be the user's inputs
   const [snippets, setSnippets] = useState<string[]>([]); // these should be the snippets
 
-  const [changes, setChanges] = useState([]);
+  const [changes, setchanges] = useState<any[]>([]);
 
   const [backendMessage, setBackendMessage] = useState("");
   const [currentVariable, setCurrentVariable] = useState({
@@ -86,13 +104,13 @@ function App() {
 
         console.log("Received values: ", done, chunks);
         
-        chunks.map((chunk) => { // wrap in a try-except
-
+        chunks.forEach((chunk) => { // wrap in a try-except
           if(chunk.length < 5){
             return;
           }
 
           let newData = JSON.parse(chunk);
+          console.log("Processed chunk: ", newData);
   
           if(newData["type"] === "information"){
             setBackendMessage(backendMessage + "\n" + newData["content"]);
@@ -109,13 +127,48 @@ function App() {
               "value": newData["content"]
             });
           } else if (newData["type"] === "changes") {
-            setChanges(newData["content"]);
-            setCurrentVariable({
-              "name": "changes",
-              "value": "# Approve by running execute or change this value"
-            });
+            let fmtChanges = extractXMLContents(newData["content"], "SDCHANGE");
+            console.log("Formatted changes: ", fmtChanges);
+
+            var newChanges = "";
+            var extractedChanges = [];
+
+            for(var fmtChangeIdx = 0; fmtChangeIdx < fmtChanges.length; fmtChangeIdx++){
+              let fmtChange = fmtChanges[fmtChangeIdx];
+              console.log("fmtChange loop:", fmtChange);
+
+              let filepath = extractXMLContents(fmtChange, "SDFILE")[0];
+              let search = extractXMLContents(fmtChange, "SDSEARCH")[0];
+              let replace = extractXMLContents(fmtChange, "SDREPLACE")[0];
+
+              // console.log(filepath, search, replace);
+              // extrChanges[fmtChangeIdx] = {
+              //   "filepath": filepath.trim(),
+              //   "search": search.trim(),
+              //   "replace": replace.trim()
+              // }
+              
+              newChanges += JSON.stringify({
+                "filepath": filepath.trim(),
+                "search": search.trim(),
+                "replace": replace.trim()
+              });
+
+              extractedChanges.push({
+                "filepath": filepath.trim(),
+                "search": search.trim(),
+                "replace": replace.trim()
+              });
+            }
+            console.log("Extracted changes: ", newChanges, extractedChanges);
+
+            setchanges(extractedChanges);
+
+            // console.log("Extracted changes: ", extrChanges);
+
+            // setChanges(extractedChanges);
           }
-        })
+        });
         
         if(done){
           break;
@@ -179,6 +232,21 @@ function App() {
     setSnippets(tempValue);
   }
 
+  let applyChanges = () => {
+    for(var i = 0; i < changes.length; i++){
+      if(changes[i]["search"]!.length > 0){
+        VSCodeMessage.postMessage({
+          type: "replaceSnippet",
+          content: {
+            originalCode: changes[i]["search"],
+            newCode: changes[i]["replace"],
+            filepath: directory + "/" + changes[i]["filepath"]
+          } 
+        });
+      }
+    }
+  }
+
 
   return (
     <Container>
@@ -190,7 +258,7 @@ function App() {
       <Button onClick={() => execute()}>Execute</Button>
 
       <Title order={1}>Snippets</Title>
-      {snippets.length == 0 && <Text>No snippets have been added yet. Add a snippet for us to be able to establish your current directory.</Text>}
+      {(snippets.length == 0) && <Text>No snippets have been added yet. Add a snippet for us to be able to establish your current directory.</Text>}
       {snippets.map((item, index) => (
         <Card shadow="sm" padding="lg" radius="md" withBorder>
           <details>
@@ -211,7 +279,9 @@ function App() {
 
 
       <Text>{backendMessage}</Text>
-      {currentVariable["name"].length > 0 && <Box>
+
+
+      {(currentVariable["name"].length > 0 && currentVariable["name"] !== "changes") && <Box>
         <Text size="xl" fw={700}>{currentVariable["name"]}</Text>
         <MDEditor 
           value={currentVariable["value"]} 
@@ -220,10 +290,17 @@ function App() {
         <Button onClick={() => sendUpdate()}>Send update</Button>
       </Box>}
 
+      {(changes.length == 0) && <Text>There are no changes right now.</Text>}
+      {(changes.length > 0) && <Button onClick={() => applyChanges()}>Apply changes</Button>}
+
       {changes.map((item, index) => (
-        <Replacement
-          content={item}
-        />
+        <Box>
+          <Text>{item['search'].length > 0 ? "Replacing in " : "Writing to" }{item["filepath"]}</Text>
+          <ReactDiffViewer
+            oldValue={item['search']}
+            newValue={item['replace']}
+          />
+        </Box>
       ))}
     </Container>
   )
