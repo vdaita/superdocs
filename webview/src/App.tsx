@@ -33,7 +33,7 @@ function App() {
   const [query, setQuery] = useState("# Query"); // this should be the user's inputs
   const [snippets, setSnippets] = useState<string[]>([]); // these should be the snippets
 
-  const [changes, setchanges] = useState<any[]>([]);
+  const [changes, setChanges] = useState<any[]>([]);
 
   const [backendMessage, setBackendMessage] = useState("");
   const [currentVariable, setCurrentVariable] = useState({
@@ -162,7 +162,11 @@ function App() {
             }
             console.log("Extracted changes: ", newChanges, extractedChanges);
 
-            setchanges(extractedChanges);
+            setCurrentVariable({
+              "name": "changes",
+              "value": "# Approve by running execute or do not approve by changing this value"
+            })
+            setChanges(extractedChanges);
 
             // console.log("Extracted changes: ", extrChanges);
 
@@ -188,7 +192,7 @@ function App() {
       const stringifiedSnippets = snippets.join("\n" + SPLIT_TOKEN + "\n");
       valueToSend = stringifiedSnippets;
     } else if (currentVariable["name"] === "changes") {
-      let approvedString = "# Approve by running execute or change this value";
+      let approvedString = "# Approve by running execute or do not approve by changing this value";
       if(currentVariable["value"] == approvedString) {
         valueToSend = "APPROVED";
       } else {
@@ -247,6 +251,17 @@ function App() {
     }
   }
 
+  let applyChange = (filepath: string, search: string, replace: string) => {
+    VSCodeMessage.postMessage({
+      type: "replaceSnippet",
+      content: {
+        originalCode: search,
+        newCode: replace,
+        filepath: directory + "/" + filepath
+      } 
+    });
+  }
+
 
   return (
     <Container>
@@ -281,7 +296,7 @@ function App() {
       <Text>{backendMessage}</Text>
 
 
-      {(currentVariable["name"].length > 0 && currentVariable["name"] !== "changes") && <Box>
+      {(currentVariable["name"].length > 0) && <Box>
         <Text size="xl" fw={700}>{currentVariable["name"]}</Text>
         <MDEditor 
           value={currentVariable["value"]} 
@@ -291,7 +306,7 @@ function App() {
       </Box>}
 
       {(changes.length == 0) && <Text>There are no changes right now.</Text>}
-      {(changes.length > 0) && <Button onClick={() => applyChanges()}>Apply changes</Button>}
+      {/* {(changes.length > 0) && <Button onClick={() => applyChanges()}>Apply changes</Button>} */}
 
       {changes.map((item, index) => (
         <Box>
