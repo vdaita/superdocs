@@ -63,27 +63,27 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 
 		const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
 		
-		const apiKey = superdocsConfig.get("apiKey");
-		const apiUrl = superdocsConfig.get("apiUrl");
-		const modelName = superdocsConfig.get("modelName");
+		// const apiKey = superdocsConfig.get("apiKey");
+		// const apiUrl = superdocsConfig.get("apiUrl");
+		// const modelName = superdocsConfig.get("modelName");
 
-		const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
+		// const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
 
-		if(!apiKey || !apiUrl){
-			vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
-			return;
-		}
+		// if(!apiKey || !apiUrl){
+		// 	vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
+		// 	return;
+		// }
 
-		webviewView.webview.postMessage({
-			type: "info",
-			content: {
-				directory: vscode.workspace.workspaceFolders![0].uri.path,
-				apiKey: apiKey,
-				apiUrl: apiUrl,
-				modelName: modelName,
-				auxiliaryModelName: auxiliaryModelName
-			}
-		})
+		// webviewView.webview.postMessage({
+		// 	type: "info",
+		// 	content: {
+		// 		directory: vscode.workspace.workspaceFolders![0].uri.path,
+		// 		apiKey: apiKey,
+		// 		apiUrl: apiUrl,
+		// 		modelName: modelName,
+		// 		auxiliaryModelName: auxiliaryModelName
+		// 	}
+		// })
 
 		// Mkae sure there is an option to send the directory over manually.
 
@@ -93,23 +93,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
 			} else if (data.type == "writeFile") {
 				writeToFile(data.content.newCode, data.content.filepath);
-			} else if (data.type == "sendTerminal") {
-
-			} else if (data.type === "saveCurrent") {
-				saveChanges();
-			} else if (data.type === "viewChanges") {
-				showChanges();
-			} else if (data.type === "revertChanges") {
-				revertChanges();
-			} else if (data.type === "response") {
-				this.mostRecentResponse = data.content;
-				this.timeLastResponseProcessed = Date.now();
-			} else if (data.type === "reset"){
-				this.messages = [];
-				webviewView.webview.postMessage({
-					type: "messages",
-					content: this.messages
-				});
 			}
 		});
 
@@ -119,6 +102,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
 			const language = vscode.window.activeTextEditor?.document.languageId;
 			const filepath = vscode.window.activeTextEditor?.document.uri.fsPath;
+			const directory = vscode.workspace.workspaceFolders![0].uri.path;
 			
 			webviewView.webview.postMessage({
 				type: "snippet",
@@ -127,7 +111,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					language: language,
 					startIndex: undefined,
 					endIndex: undefined,
-					filepath: filepath
+					filepath: filepath,
+					directory: directory
 				}
 			});
 		});

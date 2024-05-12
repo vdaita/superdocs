@@ -81,7 +81,7 @@
     "@types/express": "^4.17.20",
     "@types/glob": "^8.1.0",
     "@types/mocha": "^10.0.1",
-    "@types/node": "20.2.5",
+    "@types/node": "^20.2.5",
     "@types/vscode": "^1.83.0",
     "@typescript-eslint/eslint-plugin": "^5.59.8",
     "@typescript-eslint/parser": "^5.59.8",
