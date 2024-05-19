@@ -9,8 +9,9 @@ import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { usePostHog } from 'posthog-js/react'
 
-
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
+const SUPABASE_URL = "https://qqlfwjdpxnpoopgibsbm.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbGZ3amRweG5wb29wZ2lic2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDE0MDM0MjYsImV4cCI6MjAxNjk3OTQyNn0.FfCGI17DLv3Ejsno5--5XyfzCQtCLnoyeTf2cxGgOvc";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export default function App(){
   let [query, setQuery] = useState("");
@@ -37,6 +38,7 @@ export default function App(){
     VSCodeMessage.postMessage({
       type: "startedWebview"
     });
+    authenticate();
   })
 
   let launchRequests = async () => { // Should be making multiple requests at the same time.
@@ -73,25 +75,15 @@ export default function App(){
   let authenticate = async () => {
     const { data, error } = await supabase.auth.signInAnonymously();
     if(error){
+      console.error(error);
       notifications.show({
         title: "Error with anonymous authentication",
         message: "Please try again"
       });
     }
+    console.log(data);
     setUserData(data);
   }
-
-  useEffect(() => {
-    VSCodeMessage.onMessage((message) => {
-      if(message.type === "snippet"){
-        setSnippets((prevSnippets: Snippet[]) => {
-          return [...prevSnippets, message.content]
-        });
-      }
-    });
-    authenticate();
-  }, []);
-
   return (
     <Container>
       <Textarea onChange={(e) => setQuery(e.target.value)} value={query}>

@@ -4,8 +4,6 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import TerminalTool from './tools/terminal';
 import {replaceTextInFile, writeToFile} from './tools/finteract';
-
-import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
   
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -89,6 +87,17 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 
 		webviewView.webview.onDidReceiveMessage(data => {
 			console.log("Received message from frontend: ", data);
+			switch(data.type) {
+				case "startedWebview":
+					webviewView.webview.postMessage({
+						type: "context",
+						content: {
+							telemetryAllowed: superdocsConfig.get("telemetryAllowed"),
+
+						}
+					})
+					break;
+			}
 			if(data.type == "replaceSnippet"){
 				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
 			} else if (data.type == "writeFile") {
@@ -117,31 +126,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			});
 		});
 
-		let sendDirectory = vscode.commands.registerCommand("superdocs.sendDirectory", () => {
-			const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
-		
-			const apiKey = superdocsConfig.get("apiKey");
-			const apiUrl = superdocsConfig.get("apiUrl");
-			const modelName = superdocsConfig.get("modelName");
-	
-			const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
-	
-			if(!apiKey || !apiUrl){
-				vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
-				return;
-			}
-	
-			webviewView.webview.postMessage({
-				type: "info",
-				content: {
-					directory: vscode.workspace.workspaceFolders![0].uri.path,
-					apiKey: apiKey,
-					apiUrl: apiUrl,
-					modelName: modelName,
-					auxiliaryModelName: auxiliaryModelName
-				}
-			})
-		})
 
 		let sendTerminal = vscode.commands.registerCommand("superdocs.sendTerminal", async () => {
 			let terminalContent = await this.terminalTool?.getTerminalContent();
@@ -158,7 +142,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		this._context.subscriptions.push(addSnippet);
-		this._context.subscriptions.push(sendDirectory);
 		this._context.subscriptions.push(sendTerminal);
 	}
 
