@@ -38,8 +38,8 @@ export default function App(){
     VSCodeMessage.postMessage({
       type: "startedWebview"
     });
-    authenticate();
-  })
+    // authenticate();
+  }, []);
 
   let launchRequests = async () => { // Should be making multiple requests at the same time.
   

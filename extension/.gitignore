@@ -2,11 +2,12 @@
 /out
 /.vscode
 .env
+*.env
 .env.local
 .DS_Store
 python/__pycache__
 **/*.env
-
+**/**/*.env
 
 npm-debug.log*
 yarn-debug.log*
