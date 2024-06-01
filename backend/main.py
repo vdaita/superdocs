@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 import os
 from pydantic import BaseModel
@@ -23,6 +24,14 @@ url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 
 supabase: Client = create_client(url, key)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
 class Snippet(BaseModel):
     filepath: str
@@ -50,6 +59,10 @@ class Change(BaseModel):
 class FormattedResponse(BaseModel):
     summary: str
     plan: str
+    progress: str
+    planCompleted: bool
+    changesCompleted: bool
+    rank: int
     changes: List[Change]
 
 groq_client = Groq(
@@ -94,7 +107,35 @@ def parse_plan(plan_text: str) -> FormattedResponse:
         changes.append(parse_change_instruction(change))
     return FormattedResponse(summary, plan, changes)
 
-@app.get("/get_completion")
+def process_change(filepath, instruction, snippets):
+    relevant_snippets = ""
+    for snippet in snippets:
+        if rapidfuzz.fuzz.partial_ratio(snippet.filepath, filepath) > 0.9:
+            if len(relevant_snippets) > 0:
+                relevant_snippets += f"...\n{snippet.code}\n"
+            else:
+                relevant_snippets += f"{snippet.code}\n"
+        
+    change_response = openai_client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "Generate a search-replace block formatted to handle the requested change."
+            },
+            {
+                "role": "user",
+                "content": f"Snippets of code from the file: \n {relevant_snippets}"
+            },
+            {
+                "role": "user",
+                "content": f"Instruction: {instruction}"
+            }
+        ],
+        stream=False
+    )
+    return parse_sr_change(change_response.choices[0].message.content)
+
+@app.post("/get_completion")
 def get_completion(message: Message):
     try:
         data = supabase.auth.get_user(message.jwt_token)
@@ -117,13 +158,15 @@ def get_completion(message: Message):
                             cpy_response = cpy_response.replace(f"<{keyword}>", "\n")
                             cpy_response = cpy_response.replace(f"</{keyword}>", "\n")
 
-                        update = json.dumps({
-                                "progress": cpy_response, 
-                                "plan_completed": False,
-                                "changes_completed": False,
-                                "changes": [],
-                                "rank": response_index
-                            })
+                        update = FormattedResponse(
+                            progress=cpy_response,
+                            planCompleted=False,
+                            changesCompleted=False,
+                            changes=[],
+                            plan="",
+                            summary="",
+                            rank=response_index
+                        )
 
                         if response_index > len(responses):
                             responses.append(update)
@@ -132,55 +175,33 @@ def get_completion(message: Message):
                         
                             
                     plan = parse_plan(response)
-                    
-
-                    update = {
-                        "plan_completed": True,
-                        "plan": plan,
-                        "changes_completed": False,
-                        "changes": [],
-                        "rank": response_index
-                    }
+                
+                    update = FormattedResponse(
+                        progress="",
+                        planCompleted=True,
+                        changesCompleted=False,
+                        changes=[],
+                        plan=plan,
+                        summary="",
+                        rank=response_index
+                    )
 
                     if response_index > len(responses):
                         responses.append(update)
                     else:
                         responses[response_index] = update
+                    pool = multiprocessing.Pool(processes=len(plan.changes))
+                    changes_text = pool.map(process_change, [(change.filepath, change.instruction, message.snippets) for change in plan.changes])
+                    changes = [parse_sr_change(change_text) for change_text in changes_text]
 
-                    def process_change(filepath, instruction):
-                        relevant_snippets = ""
-                        for snippet in message.snippets:
-                            if rapidfuzz.fuzz.partial_ratio(snippet.filepath, filepath) > 0.9:
-                                if len(relevant_snippets) > 0:
-                                    relevant_snippets += f"...\n{snippet.code}\n"
-                                else:
-                                    relevant_snippets += f"{snippet.code}\n"
-                            
-                        change_response = openai_client.chat.completions.create(
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": "Generate a search-replace block formatted to handle the file thing."
-                                },
-                                {
-                                    "role": "user",
-                                    "content": f"Snippets of code from the file: \n {relevant_snippets}"
-                                }
-                            ],
-                            stream=False
-                        )
-                        return change_response.choices[0].message.content
-                    pool = multiprocessing.Pool(processes=len(plan["changes"]))
-                    changes_text = pool.map(process_change, [(change["file"], change["chunk"]) for change in plan["changes"]])
-                    changes = [parse_change(change_text) for change_text in changes_text]
-
-                    update = {
-                        "plan_completed": True,
-                        "plan": plan,
-                        "changes_completed": True,
-                        "changes": changes,
-                        "rank": response_index
-                    }
+                    update = FormattedResponse(
+                        planCompleted=True,
+                        plan=plan,
+                        changedCompleted=True,
+                        changes=changes,
+                        rank=response_index
+                    )
+                    
                     if response_index > len(responses):
                         responses.append(update)
                     else:
@@ -198,8 +219,11 @@ def get_completion(message: Message):
                             yield responses
                     if all_done:
                         yield responses
-                        return
+                        break
             
-                return StreamingResponse(stream_func)
+            return StreamingResponse(stream_func)
     except Exception as e:
         return {"message": "Failed to run"}
+    
+if __name__ == "__main__":
+    app.run(port=8000)
