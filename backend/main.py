@@ -15,6 +15,10 @@ import rapidfuzz
 import re
 
 import asyncio
+from queue import Queue, Empty
+import threading
+import time
+import traceback
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -72,6 +76,9 @@ groq_client = Groq(
 openai_client = OpenAI(
     api_key=os.environ.get("OPENAI_API_KEY")
 )
+
+def format_responses(responses: List[FormattedResponse]):
+    return [response.model_dump_json() for response in responses]
 
 def extract_xml_tags(text, tag):
     pattern = r'<' + tag + '>(.*?)</' + tag + '>'
@@ -137,93 +144,108 @@ def process_change(filepath, instruction, snippets):
 
 @app.post("/get_completion")
 def get_completion(message: Message):
-    try:
-        data = supabase.auth.get_user(message.jwt_token)
-        if data:
-            async def stream_func():
-                responses = []
+    data = supabase.auth.get_user(message.jwt_token)
+    print("User data: ", data)
+    async def stream_func():
+        message_queue = Queue()
+        response_count = 5
+        responses = [
+            FormattedResponse(
+                progress="",
+                planCompleted=False,
+                changesCompleted=False,
+                changes=[],
+                plan="",
+                summary="",
+                rank=response_index
+            ) for response_index in range(1, response_count + 1)
+        ]
+        
+        def load_response(response_index):
+            response = ""
+            plan_stream = groq_client.chat.completions.create(
+                model="llama3-8b-8192",
+                messages=[{"role": "system", "content": "Test"}, {"role": "user", "content": "test"}],
+                stream=True
+            )
+            for chunk in plan_stream:
+                if chunk.choices[0].delta.content is not None:
+                    response += chunk.choices[0].delta.content
+                    cpy_response = response
+                    # Replace all of the keywords 
+                    xml_keywords = ["summary", "plan", "changes", "filepath", "instruction"]
+                    for keyword in xml_keywords:
+                        cpy_response = cpy_response.replace(f"<{keyword}>", "\n")
+                        cpy_response = cpy_response.replace(f"</{keyword}>", "\n")
 
-                async def load_response(response_index):
-                    response = ""
-                    plan_stream = groq_client.chat.completions.create(
-                        messages=[],
-                        stream=True
-                    )
-                    for chunk in plan_stream:
-                        response += chunk.choices[0].delta.content
-                        cpy_response = response
-                        # Replace all of the keywords 
-                        xml_keywords = ["summary", "plan", "changes", "filepath", "instruction"]
-                        for keyword in xml_keywords:
-                            cpy_response = cpy_response.replace(f"<{keyword}>", "\n")
-                            cpy_response = cpy_response.replace(f"</{keyword}>", "\n")
-
-                        update = FormattedResponse(
-                            progress=cpy_response,
-                            planCompleted=False,
-                            changesCompleted=False,
-                            changes=[],
-                            plan="",
-                            summary="",
-                            rank=response_index
-                        )
-
-                        if response_index > len(responses):
-                            responses.append(update)
-                        else:
-                            responses[response_index] = update
-                        
-                            
-                    plan = parse_plan(response)
-                
                     update = FormattedResponse(
-                        progress="",
-                        planCompleted=True,
+                        progress=cpy_response,
+                        planCompleted=False,
                         changesCompleted=False,
                         changes=[],
-                        plan=plan,
+                        plan="",
                         summary="",
                         rank=response_index
                     )
 
-                    if response_index > len(responses):
-                        responses.append(update)
-                    else:
-                        responses[response_index] = update
-                    pool = multiprocessing.Pool(processes=len(plan.changes))
-                    changes_text = pool.map(process_change, [(change.filepath, change.instruction, message.snippets) for change in plan.changes])
-                    changes = [parse_sr_change(change_text) for change_text in changes_text]
-
-                    update = FormattedResponse(
-                        planCompleted=True,
-                        plan=plan,
-                        changedCompleted=True,
-                        changes=changes,
-                        rank=response_index
-                    )
+                    # print("Added message to queue")
+                    message_queue.put({"index": response_index, "fr": update})
                     
-                    if response_index > len(responses):
-                        responses.append(update)
-                    else:
-                        responses[response_index] = update
-
-                for i in range(5):
-                    asyncio.create_task(load_response(i))
-                
-                for _ in range(600): # take max 60 seconds
-                    await asyncio.sleep(0.1)
-                    all_done = True
-                    for response in responses:
-                        if not(response["plan_completed"]) or not(response["changes_completed"]):
-                            all_done = False
-                            yield responses
-                    if all_done:
-                        yield responses
-                        break
+                    
+            plan = parse_plan(response)
+        
+            update = FormattedResponse(
+                progress="",
+                planCompleted=True,
+                changesCompleted=False,
+                changes=[],
+                plan=plan,
+                summary="",
+                rank=response_index
+            )
             
-            return StreamingResponse(stream_func)
-    except Exception as e:
-        return {"message": "Failed to run"}
+            # print("Added message to queue")
+            message_queue.put({"index": response_index, "fr": update})
+            pool = multiprocessing.Pool(processes=len(plan.changes))
+            changes_text = pool.map(process_change, [(change.filepath, change.instruction, message.snippets) for change in plan.changes])
+            changes = [parse_sr_change(change_text) for change_text in changes_text]
+
+            update = FormattedResponse(
+                planCompleted=True,
+                plan=plan,
+                changedCompleted=True,
+                changes=changes,
+                rank=response_index
+            )
+            
+            print("Added message to queue")
+            message_queue.put({"index": response_index, "fr": update})
+        for i in range(5):
+            thread = threading.Thread(target=load_response, args=(i,))
+            thread.start()
+        
+        start_time = time.time()
+        while True: # take max 60 seconds
+            if time.time() - start_time > 60:
+                break
+            try:
+                message = message_queue.get(timeout=0.1)
+                responses[message["index"]] = message["fr"]
+                all_done = True
+                for response in responses:
+                    if not(response.planCompleted) or not(response.changesCompleted):
+                        all_done = False
+                yield json.dumps(format_responses(responses), indent=4)
+                if all_done:
+                    break
+            except (KeyboardInterrupt, SystemExit):
+                print("Received keyboard interrupt.")
+                return
+            except Empty:
+                print("Empty")
+                continue
+    
+    return StreamingResponse(stream_func())
     
 if __name__ == "__main__":
     app.run(port=8000)

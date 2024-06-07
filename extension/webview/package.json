@@ -20,6 +20,7 @@
     "openai": "^4.47.1",
     "posthog-js": "^1.131.4",
     "react": "^18.2.0",
+    "react-code-blocks": "^0.1.6",
     "react-copy-to-clipboard": "^5.1.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.0",
