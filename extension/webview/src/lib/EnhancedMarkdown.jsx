@@ -16,49 +16,35 @@ export default function EnhancedMarkdown({ message }) {
     }
 
     return (
-        <>
-            <Badge
-                size="xl"
-                variant="gradient"
-                gradient={message["role"] ? { from: 'blue', to: 'cyan', deg: 90 } : {from: 'red', to: 'orange', deg: 90}}
-            >
-            {message["role"]}
-            </Badge>
-            
-
-            <details>
-                <summary>{message["content"].split("\n")[0]}</summary>
-                <Markdown
-                    children={message["content"]}
-                    components={{
-                        code(props) {
-                            const {children, className, node, ...rest} = props
-                            const match = /language-(\w+)/.exec(className || '')
-                            return match ? (
+        <Markdown
+            children={message}
+            components={{
+                code(props) {
+                    const {children, className, node, ...rest} = props
+                    const match = /language-(\w+)/.exec(className || '')
+                    return match ? (
+                        <Box>
+                            <CopyToClipboard text={String(children).replace(/\n$/, '')}>
                                 <Box>
-                                    <CopyToClipboard text={String(children).replace(/\n$/, '')}>
-                                        <Box>
-                                            <Text size="xs">Click to copy</Text>
-                                            <SyntaxHighlighter
-                                                {...rest}
-                                                children={String(children).replace(/\n$/, '')}
-                                                style={dark}
-                                                language={match[1]}
-                                                PreTag="div"
-                                            />
-                                        </Box>
-                                    </CopyToClipboard>
-
+                                    <Text size="xs">Click to copy</Text>
+                                    <SyntaxHighlighter
+                                        {...rest}
+                                        children={String(children).replace(/\n$/, '')}
+                                        style={dark}
+                                        language={match[1]}
+                                        PreTag="div"
+                                    />
                                 </Box>
-                            ) : (
-                            <code {...rest} className={className}>
-                                {children}
-                            </code>
-                            )
-                        }
-                    }}
-                />
-            </details>
-        </>
+                            </CopyToClipboard>
+
+                        </Box>
+                    ) : (
+                    <code {...rest} className={className}>
+                        {children}
+                    </code>
+                    )
+                }
+            }}
+        />
     );
 }

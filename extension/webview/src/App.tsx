@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Button, Text, Textarea, Tabs, Card, Badge, Loader, Box } from '@mantine/core';
-import GenerationNode from './lib/Node';
-import { Snippet } from './lib/Snippet';
+import { Container, Button, Text, TextInput, Textarea, Tabs, Card, Badge, Loader, Box } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
@@ -9,6 +7,8 @@ import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { usePostHog } from 'posthog-js/react'
 import { CodeBlock } from 'react-code-blocks';
+import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter'
+import {dark} from 'react-syntax-highlighter/dist/esm/styles/prism'
 
 const SUPABASE_URL = "https://qqlfwjdpxnpoopgibsbm.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbGZ3amRweG5wb29wZ2lic2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDE0MDM0MjYsImV4cCI6MjAxNjk3OTQyNn0.FfCGI17DLv3Ejsno5--5XyfzCQtCLnoyeTf2cxGgOvc";
@@ -30,13 +30,50 @@ type Generation = {
   summary: string;
 };
 
+type Plan = {
+  message: string
+  editInstructions: EditInstruction[]
+  newFiles: NewFile[]
+}
+
+type EditInstruction = {
+  instruction: string
+  filepath: string
+  changesCompleted: boolean
+  changes?: Change[]
+}
+
+type Change = {
+  filepath: string
+  search_block: string
+  replace_block: string
+}
+
+type NewFile = {
+  filepath: string,
+  code: string,
+}
+
+type Snippet = {
+  filepath: string
+  code: string
+  language: string
+}
+
 export default function App(){
   let [query, setQuery] = useState("");
   let [snippets, setSnippets] = useState<Snippet[]>([]);
-  let [generations, setGenerations] = useState<Generation[]>();
+  
+  let [plans, setPlans] = useState<Plan[]>([]);
+
   let [error, setError] = useState<string | undefined>();
 
-  let [userData, setUserData] = useState<any>(false);
+  let [user, setUser] = useState<any>(false);
+  let [email, setEmail] = useState<string>("");
+  let [sentCode, setSentCode] = useState<boolean>(false);
+  let [otpCode, setOtpCode] = useState<string>("");
+
+  let [loading, setLoading] = useState<boolean>(false);
   const posthog = usePostHog();
 
   useEffect(() => {
@@ -87,22 +124,20 @@ export default function App(){
     // TODO: listen for a change in the authentication state
   }, []);
 
-  let launchRequests = async () => { // Should be making multiple requests at the same time.
-    
-  }
 
   // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
 
   let processRequest = async () => {
     console.log("Current environment: ", process.env.NODE_ENV);
     let url = (process.env.NODE_ENV === "development") ? "http://localhost:8000/get_completion" : "";
-    let accessToken = ((await supabase.auth.getSession()).data.session?.access_token);
+
+    let authSession = await supabase.auth.getSession();
 
     let response = await fetch(url, {
       body: JSON.stringify({
         snippets: snippets,
         request: query,
-        jwt_token: ""
+        session: authSession.data.session
       }),
       method: "POST",
       headers: {
@@ -124,8 +159,9 @@ export default function App(){
           console.log("Blank chunk - skipping.");
           continue;
         }
-        let generations: Generation[] = JSON.parse(chunkValue);
-        setGenerations(generations);
+        
+        let content = JSON.parse(chunkValue);
+        setPlans(content);
       }
     } else {
       setError("There was an error on the server.");
@@ -140,19 +176,96 @@ export default function App(){
     });
   }
 
-  let authenticate = async () => {
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'github'
+  let sendCode = async () => {
+    setLoading(true);
+
+    const { data, error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        shouldCreateUser: true
+      }
     });
-    if(!error){
-      setUserData(data);
-    } else {
+
+    if(error){
+      console.error("sendCode: ", error);
       notifications.show({
-        title: "There was an error with authentication",
-        message: "Please try again"
+        message: error.message,
+        title: "There was an error sending your code."
       })
+    } else {
+      setSentCode(true);
     }
+
+    setLoading(false);
   }
+
+  let verifyCode = async () => {
+    setLoading(true);
+
+    const {
+      data: { session },
+      error
+    } = await supabase.auth.verifyOtp({
+      email: email,
+      token: otpCode,
+      type: "email"
+    });
+
+    if(session){
+      setUser(session?.user);
+    }
+
+    if(error){
+      console.error("verifyCode", error);
+      notifications.show({
+        message: error.message,
+        title: "There was an error verifying your code."
+      });
+    }
+
+    setLoading(false);
+  }
+
+  let sendChange = (filepath: string, search_block: string, replace_block: string) => {
+    VSCodeMessage.postMessage({
+      type: "replaceSnippet",
+      content: {
+        originalCode: search_block,
+        newCode: replace_block,
+        filepath: filepath
+      }
+    })
+  }
+
+  let writeFile = (filepath: string, content: string) => {
+    VSCodeMessage.postMessage({
+      type: "writeFile",
+      content: {
+        filepath: filepath,
+        code: content
+      }
+    })
+  }
+
+  // if(!user) {
+  //   if(sentCode){
+  //     return (
+  //       <Container m="sm">
+  //         <TextInput value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="OTP Code"></TextInput>
+  //         <Button disabled={loading} onClick={() => verifyCode()}>Confirm code</Button>
+  //         {loading && <Loader/>}
+  //       </Container>
+  //     )
+  //   } else {
+  //     return (
+  //       <Container m="sm">
+  //         <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"></TextInput>
+  //         <Button disabled={loading} onClick={() => sendCode()}>Send Code</Button>
+  //         {loading && <Loader/>}
+  //       </Container>
+  //     )
+  //   }
+  // }
 
   return (
     <Container>
@@ -175,39 +288,59 @@ export default function App(){
       {error && <Box color="red">
         {error}
       </Box>}
-      
-      {generations && 
-        <>
-            {generations!.map((generation, index) => (
-                <>
-                    {!generation.planCompleted && <EnhancedMarkdown message={
-                      {
-                        role: "Planning in progress",
-                        content: generation["progress"]
-                      }}></EnhancedMarkdown>}
-                    {generation.planCompleted && <>
-                      <Badge color="green">Summary</Badge>
-                      <Text>{generation.summary}</Text>
-                      <Badge color="green">Plan</Badge>
-                      <Text>{generation.plan}</Text>
-                      {!generation.changesCompleted && <Loader color="blue" type="dots"/>}
-                      {generation.changesCompleted && <>
-                        {generation.changes.map((change, index) => (
-                          <>
-                            <Text>{change.filepath}</Text>
-                            <CodeBlock text={change.search_block} codeContainerStyle={{background: 'red'}}></CodeBlock>
-                            <CodeBlock text={change.replace_block} codeContainerStyle={{background: 'green'}}></CodeBlock>
-                            <Button>Make replacement</Button>
-                          </>
-                        ))}
-                    </>}
-                  </>}
-                </>
+    
+      <Tabs>
+        <Tabs.List>
+          {plans.map((item, index) => (
+            <Tabs.Tab value={index.toString()}>
+              Plan {index}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+        {plans.map((item, index) => (
+          <Tabs.Panel value={index.toString()}>
+            <Badge>Message</Badge>
+            <EnhancedMarkdown message={item.message}></EnhancedMarkdown>
+            {item.editInstructions.length > 0 && <Box>
+              <Badge>Edits</Badge>
+              {item.editInstructions.map((instructionItem, instructionIndex) => (
+                <Box>
+                  {instructionItem.instruction}
+                  {instructionItem.changesCompleted && <Box>
+                      {instructionItem.changes?.map((changeItem, changeIndex) => (
+                        <Card>
+                          <Text style={{fontWeight: "bold"}}>{changeItem.filepath}</Text>
+                          <Box m="sm" bg="red">
+                            <code>
+                              {changeItem.search_block}
+                            </code>
+                          </Box>
+                          <Box m="sm" bg="green">
+                            <code>
+                              {changeItem.replace_block}
+                            </code>
+                          </Box>
+
+                          <Button onClick={() => sendChange(changeItem.filepath, changeItem.search_block, changeItem.replace_block)}>Accept change</Button>
+                        </Card>
+                      ))}
+                    </Box>}
+                  {!instructionItem.changesCompleted && <Text>Loading changes...</Text>}
+                </Box>
+              ))}
+            </Box>}
+          
+            <Badge>New Files</Badge>
+            {item.newFiles.map((newFileItem, newFileIndex) => (
+              <Box>
+                <Text style={{ fontWeight: "bold" }}>{newFileItem.filepath}</Text>
+                <EnhancedMarkdown message={newFileItem.code}/>
+                <Button onClick={() => writeFile(newFileItem.filepath, newFileItem.code)}>Accept new file</Button>
+              </Box>
             ))}
-          </>
-      }
-
-
+          </Tabs.Panel>
+        ))}
+      </Tabs>
     </Container>
   );
 }

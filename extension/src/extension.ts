@@ -3,7 +3,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import TerminalTool from './tools/terminal';
-import {replaceTextInFile, writeToFile} from './tools/finteract';
+import * as fs from 'fs';
   
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -30,18 +30,11 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
 	private terminalTool?: TerminalTool;
-	private timeLastResponseProcessed?: number;
-	private mostRecentResponse?: any;
-	private messages?: any[];
-
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _context: vscode.ExtensionContext
 	) {
 		this.terminalTool = new TerminalTool();
-		this.messages = [];
-		this.timeLastResponseProcessed = 0;
-		this.mostRecentResponse = "";
 	 }
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
@@ -99,18 +92,25 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					break;
 			}
 			if(data.type == "replaceSnippet"){
-				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
+				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				
+				let file = fs.readFileSync(joinedFilepath).toString("utf-8");
+				file = file.replace(data.content.originalCode, data.content.newCode);
+				fs.writeFileSync(joinedFilepath, file);
 			} else if (data.type == "writeFile") {
-				writeToFile(data.content.newCode, data.content.filepath);
+				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				fs.writeFileSync(joinedFilepath, data.content.code);
 			}
 		});
 
 		let addSnippet = vscode.commands.registerCommand("superdocs.addSnippet", () => {
 			console.log("Selecting text");
+			const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path
+
 			const selection = vscode.window.activeTextEditor?.selection;
 			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
 			const language = vscode.window.activeTextEditor?.document.languageId;
-			const filepath = vscode.window.activeTextEditor?.document.uri.fsPath;
+			const filepath = path.relative(workspaceDirectory, vscode.window.activeTextEditor?.document.uri.fsPath!);
 			const directory = vscode.workspace.workspaceFolders![0].uri.path;
 			
 			webviewView.webview.postMessage({
