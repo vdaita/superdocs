@@ -11,10 +11,6 @@ export default function EnhancedMarkdown({ message }) {
 
     console.log("Received message in EnhancedMarkdown: ", message);
 
-    if(!message.content){
-        return (<>Empty message</>)
-    }
-
     return (
         <Markdown
             children={message}

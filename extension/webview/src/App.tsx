@@ -40,6 +40,7 @@ type EditInstruction = {
   instruction: string
   filepath: string
   changesCompleted: boolean
+  changeUpdate?: string
   changes?: Change[]
 }
 
@@ -129,43 +130,71 @@ export default function App(){
 
   let processRequest = async () => {
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:8000/get_completion" : "";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "";
 
     let authSession = await supabase.auth.getSession();
-
-    let response = await fetch(url, {
-      body: JSON.stringify({
-        snippets: snippets,
-        request: query,
-        session: authSession.data.session
-      }),
-      method: "POST",
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      }
-    });
-    if(response.ok){
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
-
-      let done = false;
-      while(!done){
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        let chunkValue = decoder.decode(value);
-        console.log("Chunk value from backend: ", chunkValue);
-        if(chunkValue.length == 0){
-          console.log("Blank chunk - skipping.");
-          continue;
+    setLoading(true);
+    try {
+      let response = await fetch(url, {
+        body: JSON.stringify({
+          snippets: snippets,
+          request: query,
+          session: authSession.data.session
+        }),
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
         }
-        
-        let content = JSON.parse(chunkValue);
-        setPlans(content);
+      });
+      console.log("Received response from server: ", response);
+      if(response.ok){
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+  
+        let done = false;
+        while(!done){
+          const { value, done: doneReading } = await reader.read();
+          done = doneReading;
+          let chunkValue = decoder.decode(value);
+          console.log("Chunk value from backend: ", chunkValue);
+          if(chunkValue.length == 0){
+            console.log("Blank chunk - skipping.");
+            continue;
+          }
+          let splitChunks = chunkValue.split("<SDSEP>");
+          
+          try {
+            splitChunks.forEach((chunk) => {
+              if(chunk.length == 0){
+                return;
+              }
+              let parsedChunk = JSON.parse(chunk);
+              console.log("Received chunk of type: ", parsedChunk["type"]);
+              if(parsedChunk["type"] === "plans"){
+                setPlans(parsedChunk["plans"]);
+              } else if (parsedChunk["type"] === "change") { // this is a change
+                setPlans((plans) => {
+                  let newPlans = structuredClone(plans);
+                  newPlans[0]["editInstructions"][parsedChunk["index"]] = parsedChunk["instruction"];
+                  console.log("New plans given an instruction: ", newPlans);
+                  return newPlans;
+                });
+              }
+            });
+          } catch (e) {
+            console.error("Processing error: moving on - ", e, splitChunks);
+          }
+        }
+      } else {
+        console.error("Response error: ", response);
+        setError("There was an error on the server.");
       }
-    } else {
-      setError("There was an error on the server.");
+    } catch (e) {
+      console.error("Error: ", e);
+      setError("There was an error.");
     }
+    console.log("Reached the end of the function.");
+    setLoading(false);
   }
 
   let deleteSnippet = (index: number) => {
@@ -271,13 +300,14 @@ export default function App(){
     <Container>
       <Textarea onChange={(e) => setQuery(e.target.value)} value={query}>
       </Textarea>
+      {loading && <Loader/>}
       <Container m="sm">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
-            <EnhancedMarkdown message={{
-              role: "snippet",
-              content: `${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"
-            }}/>
+            <details>
+              <summary>{item.filepath}</summary>
+              <EnhancedMarkdown message={`${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"}/>
+            </details>
             <Button onClick={() => deleteSnippet(index)}>
               Delete Snippet
             </Button>
@@ -289,7 +319,7 @@ export default function App(){
         {error}
       </Box>}
     
-      <Tabs>
+      <Tabs value={"0"}>
         <Tabs.List>
           {plans.map((item, index) => (
             <Tabs.Tab value={index.toString()}>
@@ -325,19 +355,10 @@ export default function App(){
                         </Card>
                       ))}
                     </Box>}
-                  {!instructionItem.changesCompleted && <Text>Loading changes...</Text>}
+                  {!instructionItem.changesCompleted && <Text>{instructionItem.changeUpdate}</Text>}
                 </Box>
               ))}
             </Box>}
-          
-            <Badge>New Files</Badge>
-            {item.newFiles.map((newFileItem, newFileIndex) => (
-              <Box>
-                <Text style={{ fontWeight: "bold" }}>{newFileItem.filepath}</Text>
-                <EnhancedMarkdown message={newFileItem.code}/>
-                <Button onClick={() => writeFile(newFileItem.filepath, newFileItem.code)}>Accept new file</Button>
-              </Box>
-            ))}
           </Tabs.Panel>
         ))}
       </Tabs>
