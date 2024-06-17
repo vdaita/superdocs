@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import Groq from 'groq-sdk';
 import { distance, closest } from 'fastest-levenshtein';
 import { jwtVerify } from 'jose';
+import { getFixedSearchReplace } from './diff';
 
 console.log("Hello via Bun!");
 const groq = new Groq();
@@ -22,8 +23,8 @@ type EditInstruction = {
 
 type Change = {
     filepath: string
-    search_block: string
-    replace_block: string
+    searchBlock: string
+    replaceBlock: string
 }
 
 type NewFile = {
@@ -109,7 +110,7 @@ Bun.serve({
         snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
         
         let unifiedSnippets: Snippet[] = [];
-        let unifiedSnippetsMap: any = {};
+        let files = new Map();
         filepaths.forEach((filepath) => {
             let codeChunks: string[] = [];
             let lang: string = "";            
@@ -124,8 +125,8 @@ Bun.serve({
                 code: codeChunks.join("\n----\n"),
                 language: lang
             });
-            unifiedSnippetsMap[filepath] = codeChunks.join("\n----\n");
-        })
+            files.set(filepath, codeChunks.join("\n----\n"));
+        });
 
         // try {
         //     const user = await jwtVerify(
@@ -185,39 +186,25 @@ Bun.serve({
                         };
 
                         try {
-                            const instResponse = await groq.chat.completions.create({
-                                messages: [],
+                            const instResponse = await openai.chat.completions.create({
+                                messages: [
+                                    {
+                                        "role": "system",
+                                        "content": ``
+                                    }
+                                ],
                                 model: "gpt-4o"
                             });
-                            let inst = instResponse.choices[0].message.content!;
-                            let changesXML = extractXmlTags(inst, "change"); // Each change should be separate
-
-                            for(var change of changesXML){ // There should only be one filepath, search, replace in each of these.
-                                var filepaths = extractXmlTags(change, "filepath");
-                                var searches = extractXmlTags(change, "search");
-                                var replaces = extractXmlTags(change, "replace");
-    
-                                // WHat do you do when there is such an error?
-                                if(filepaths.length == 0 || searches.length == 0 || replaces.length == 0){
-                                    console.error("There was a change without the required information: ", change);
-                                    newInstruction.changes?.push({
-                                        filepath: "Error",
-                                        search_block: "Error",
-                                        replace_block: "Error"
-                                    });
-                                    continue;
-                                }
-
-                                var filepath = findClosestFile(filepaths[0], filepaths);
-                                var searchBlock = findBestMatch(searches[0], unifiedSnippetsMap[filepath])
-    
+                            let diffMd = instResponse.choices[0].message.content!;
+                            let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
+                            fixedSearchReplaces.forEach((fsr) => {
                                 newInstruction.changes?.push({
-                                    filepath: filepath,
-                                    search_block: searchBlock,
-                                    replace_block: replaces[0]
+                                    filepath: fsr.filepath,
+                                    searchBlock: fsr.searchBlock,
+                                    replaceBlock: fsr.replaceBlock
                                 });
-                            }
-    
+                            });
+
                             return newInstruction;
                         } catch (e) {
                             return newInstruction;
