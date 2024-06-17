@@ -3,6 +3,7 @@ import Groq from 'groq-sdk';
 import { distance, closest } from 'fastest-levenshtein';
 import { jwtVerify } from 'jose';
 import { getFixedSearchReplace } from './diff';
+import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT } from './prompts';
 
 console.log("Hello via Bun!");
 const groq = new Groq();
@@ -46,61 +47,6 @@ type Snippet = {
 //     content: string | Plan | Change
 // }
 
-function extractXmlTags(text: string, tag: string) {
-    const pattern = new RegExp(`<${tag}>(.*?)<\/${tag}>`, 'gs');
-    const matches = [];
-    let match;
-    while ((match = pattern.exec(text)) !== null) {
-        matches.push(match[1]);
-    }
-    return matches;
-}
-
-function findBestMatch(queryText: string, originalText: string){
-    queryText = queryText.trim();
-    originalText = originalText.trim();
-
-    const queryLines = queryText.split("\n");
-    if(queryLines.length == 0){
-        return queryText;
-    }
-
-    const firstQueryLine = queryLines.at(0)!;
-    const lastQueryLine = queryLines.at(-1)!;
-
-    const originalLines = originalText.split("\n");
-
-    let bestMatchSnippet = ""
-    let bestMatchSimilarity = 0;
-
-    for(var startLine = 0; startLine < originalLines.length; startLine++){
-        let minEnd = Math.min(originalLines.length, Math.max(startLine, startLine + queryLines.length - 5));
-        let maxEnd = Math.min(originalLines.length, startLine + queryLines.length + 5);
-        for(var endLine = minEnd; endLine < maxEnd; endLine++){
-            let originalSnippet = originalLines.slice(startLine, endLine + 1).join("\n");
-            let firstOriginalLine = originalLines.at(startLine)!;
-            let lastOriginalLine = originalLines.at(endLine + 1)!;
-
-            let firstLineSimilarity = distance(firstOriginalLine, firstQueryLine)/Math.max(firstOriginalLine.length, firstQueryLine.length);
-            let lastLineSimilarity = distance(lastOriginalLine, lastQueryLine)/Math.max(lastOriginalLine.length, lastQueryLine.length);
-            let totalSimilarity = distance(originalSnippet, queryText)/Math.max(originalSnippet.length, queryText.length);
-
-            let totalScore = firstLineSimilarity + lastLineSimilarity + totalSimilarity;
-            if(totalScore > bestMatchSimilarity){
-                bestMatchSimilarity = totalScore;
-                bestMatchSnippet = originalSnippet;
-            }
-        }
-    }
-
-    return bestMatchSnippet;
-}
-
-function findClosestFile(filepath: string, filepaths: string[]){
-    return closest(filepath, filepaths);
-}
-
-
 Bun.serve({
     port: 3000,
     async fetch(req) {
@@ -126,6 +72,11 @@ Bun.serve({
                 language: lang
             });
             files.set(filepath, codeChunks.join("\n----\n"));
+        });
+
+        let fileContextStr = "";
+        unifiedSnippets.forEach((snippet) => {
+            fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
         });
 
         // try {
@@ -178,7 +129,6 @@ Bun.serve({
                 
                 for(var i = 0; i < plan.editInstructions.length; i++) {
                     instructionProcessingRequests.push(new Promise<EditInstruction>(async () => {
-
                         let newInstruction: EditInstruction = {
                             instruction: plan.editInstructions[i].instruction, 
                             changesCompleted: true,
@@ -190,7 +140,11 @@ Bun.serve({
                                 messages: [
                                     {
                                         "role": "system",
-                                        "content": ``
+                                        "content": AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": fileContextStr + `\n Implement the following and the following only. Other required steps will be completed elsewhere. Instruction: ${plan.editInstructions[i].instruction}`
                                     }
                                 ],
                                 model: "gpt-4o"
