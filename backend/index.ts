@@ -8,6 +8,9 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { GoogleGenerativeAI, type GenerationConfig } from "@google/generative-ai";
 
+// @ts-ignore
+import { Transform, TransformCallback } from 'stream'; 
+
 console.log("Hello via Bun!");
 const together = new OpenAI({
     baseURL: "https://api.together.xyz/",
@@ -51,6 +54,11 @@ type Snippet = {
     code: string
     language: string
   }
+
+type Update = {
+    executionIndex: number,
+    newEditInstruction: EditInstruction
+}
 
 // type Update = {
 //     section: "plan" | "change"
@@ -112,7 +120,7 @@ Bun.serve({
     async fetch(req) {
 
         const url = new URL(req.url);
-        console.log("Full request: ", req);
+        // console.log("Full request: ", req);
 
         if (req.method === "OPTIONS"){
             const res = new Response('Departed', CORS_HEADERS);
@@ -120,7 +128,7 @@ Bun.serve({
         }
 
         if(url.pathname === "/get_changes") {
-            console.log("Request body: ", req.body);
+            // console.log("Request body: ", req.body);
             const reqJson = await req.json();
             let snippets: Snippet[] = reqJson["snippets"];
             let filepaths: string[] = [];
@@ -189,11 +197,15 @@ Bun.serve({
                         bpPlan.subMessages.forEach((inst) => {
                             newPlan.editInstructions.push({
                                 instruction: inst,
-                                changesCompleted: false
+                                changesCompleted: false,
+                                changeUpdate: ""
                             });
                         });
                         plan = newPlan;
-                        controller.enqueue(JSON.stringify([plan]) + "<SDSEP>");
+                        controller.enqueue(JSON.stringify({
+                            type: "plans",
+                            plans: [plan]
+                        }) + "<SDSEP>");
                     }
 
                     // let planResponse = await together.chat.completions.create({
@@ -219,16 +231,23 @@ Bun.serve({
                     //     })
                     // }
     
-                    controller.enqueue(JSON.stringify([plan]));
+                    controller.enqueue(JSON.stringify({
+                        type: "plans", 
+                        plans: [plan]
+                    }) + "<SDSEP>");
     
                     let instructionProcessingRequests = [];
+                    // const emitter = new EventEmitter();
                     
+
                     for(var i = 0; i < plan.editInstructions.length; i++) {
                         instructionProcessingRequests.push(new Promise<EditInstruction>(async () => {
+                            console.log("Starting request for edit at index ", i);
                             let newInstruction: EditInstruction = {
                                 instruction: plan.editInstructions[i].instruction, 
-                                changesCompleted: true,
-                                changes: []
+                                changesCompleted: false,
+                                changes: [],
+                                changeUpdate: ""
                             };
     
                             try {
@@ -246,13 +265,20 @@ Bun.serve({
                                     model: "gpt-4o",
                                     stream: true
                                 });
-                                
+
                                 let diffMd = "";
                                 for await(const chunk of instResponse) {
                                     diffMd += chunk.choices[0]?.delta?.content || "";
+                                    newInstruction.changeUpdate = diffMd;
+                                    // emitter.emit(i.toString(), JSON.stringify(newInstruction));
                                 }
-                                plan.editInstructions[i].changeUpdate = diffMd;
-                                controller.enqueue(JSON.stringify([plan]));
+                                controller.enqueue(
+                                    JSON.stringify({
+                                        type: "change",
+                                        index: i,
+                                        instruction: newInstruction
+                                    }) + "<SDSEP>"
+                                );
 
                                 let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
                                 fixedSearchReplaces.forEach((fsr) => {
@@ -262,19 +288,32 @@ Bun.serve({
                                         replaceBlock: fsr.replaceBlock
                                     });
                                 });
+                                newInstruction.changesCompleted = true;
+                                controller.enqueue(
+                                    JSON.stringify({
+                                        type: "change",
+                                        index: i,
+                                        instruction: newInstruction
+                                    }) + "<SDSEP>"
+                                );
+                                // emitter.emit(i.toString(), JSON.stringify(newInstruction));
     
                                 return newInstruction;
                             } catch (e) {
+                                console.log("Error occurred: ", e);
                                 return newInstruction;
                             }
                         }));
                     }
-    
+
                     let changedInstructions: EditInstruction[] = await Promise.all(instructionProcessingRequests);
+                    console.log("Completed all edit instructions");
                     plan.editInstructions = changedInstructions;
-    
                     // Send these instructions back 
-                    controller.enqueue(JSON.stringify([plan]));
+                    controller.enqueue(JSON.stringify({
+                        type: "plans", 
+                        plans: [plan]
+                    }) + "<SDSEP>");
                 }
             })
     

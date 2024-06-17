@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.12.0",
+    "events": "^3.3.0",
     "fastest-levenshtein": "^1.0.16",
     "fuzzball": "^2.1.2",
     "groq-sdk": "^0.4.0",
