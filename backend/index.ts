@@ -240,8 +240,9 @@ Bun.serve({
                     // const emitter = new EventEmitter();
                     
 
-                    for(var i = 0; i < plan.editInstructions.length; i++) {
+                    for(var ii = 0; ii < plan.editInstructions.length; ii++) {
                         instructionProcessingRequests.push(new Promise<EditInstruction>(async () => {
+                            let i = parseInt(ii.toString()); // This is to make sure that the index stays static.
                             console.log("Starting request for edit at index ", i);
                             let newInstruction: EditInstruction = {
                                 instruction: plan.editInstructions[i].instruction, 
@@ -267,10 +268,20 @@ Bun.serve({
                                 });
 
                                 let diffMd = "";
+                                console.log("Getting ready to iterate through stream for: ", i);
                                 for await(const chunk of instResponse) {
                                     diffMd += chunk.choices[0]?.delta?.content || "";
                                     newInstruction.changeUpdate = diffMd;
                                     // emitter.emit(i.toString(), JSON.stringify(newInstruction));
+                                    
+                                    controller.enqueue(
+                                        JSON.stringify({
+                                            type: "change",
+                                            index: i,
+                                            instruction: newInstruction
+                                        }) + "<SDSEP>"
+                                    );
+                                    // console.log("Sending update from index: ", i);
                                 }
                                 controller.enqueue(
                                     JSON.stringify({
