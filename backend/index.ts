@@ -158,16 +158,16 @@ Bun.serve({
                 fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
             });
     
-            // try {
-            //     const user = await jwtVerify(
-            //         reqJson["session"]["accessToken"],
-            //         new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
-            //     );
-            //     // Either user is verified or this fails.
-            // } catch (e) {
-            //     console.error("Token validation failed: ", e);
-            //     throw "Token validation failed.";
-            // }
+            try {
+                const user = await jwtVerify(
+                    reqJson["session"]["accessToken"],
+                    new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
+                );
+                // Either user is verified or this fails.
+            } catch (e) {
+                console.error("Token validation failed: ", e);
+                throw "Token validation failed."; // Error out completely
+            }
     
             const stream = new ReadableStream({
                 async start(controller) {

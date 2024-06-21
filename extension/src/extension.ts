@@ -26,6 +26,13 @@ export function activate(context: vscode.ExtensionContext) {
 // This method is called when your extension is deactivated
 export function deactivate() {}
 
+type Snippet = {
+	filepath: string
+	code: string
+	language: string
+  }
+  
+
 class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
@@ -91,15 +98,49 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					})
 					break;
 			}
-			if(data.type == "replaceSnippet"){
-				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
-				
+			if(data.type === "replaceSnippet"){
+				let joinedFilepath = data.filepath;
+				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
 				let file = fs.readFileSync(joinedFilepath).toString("utf-8");
 				file = file.replace(data.content.originalCode, data.content.newCode);
 				fs.writeFileSync(joinedFilepath, file);
-			} else if (data.type == "writeFile") {
+			} else if (data.type === "writeFile") {
 				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
 				fs.writeFileSync(joinedFilepath, data.content.code);
+			} else if (data.type === "semanticSearch") {
+				let requestString = data.query;
+				// Ask the backend for relevant queries that should be applied
+			} else if (data.type === "getWorkspaceData") {
+				(async () => {
+					let files: Snippet[] = [];
+					for(const tabGroup of vscode.window.tabGroups.all){
+						for(const tab of tabGroup.tabs) {
+							if(tab.input instanceof vscode.TabInputText) {
+								let document = await vscode.workspace.openTextDocument(tab.input.uri.fsPath);
+								let text = document.getText();
+
+								if(text.length > 17000) {
+									vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
+								} else {
+									files.push({
+										filepath: tab.input.uri.fsPath,
+										code: document.getText(),
+										language: document.languageId,
+									});
+									// if a file exceeds a certain character count, don't add it
+								}
+							}
+						}
+					}
+					webviewView.webview.postMessage({
+						type: "processRequest",
+						content: {
+							snippets: files
+						}
+					});
+	
+					// TODO: add a check for gitignore
+				})();				
 			}
 		});
 
@@ -111,8 +152,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
 			const language = vscode.window.activeTextEditor?.document.languageId;
 			const filepath = path.relative(workspaceDirectory, vscode.window.activeTextEditor?.document.uri.fsPath!);
-			const directory = vscode.workspace.workspaceFolders![0].uri.path;
-			
+						
 			webviewView.webview.postMessage({
 				type: "snippet",
 				content: {
@@ -121,7 +161,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					startIndex: undefined,
 					endIndex: undefined,
 					filepath: filepath,
-					directory: directory
+					directory: workspaceDirectory
 				}
 			});
 		});

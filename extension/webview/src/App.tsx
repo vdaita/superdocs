@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Button, Text, TextInput, Textarea, Tabs, Card, Badge, Loader, Box } from '@mantine/core';
+import { Container, Button, Text, TextInput, Textarea, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { usePostHog } from 'posthog-js/react'
-import { CodeBlock } from 'react-code-blocks';
-import {Prism as SyntaxHighlighter} from 'react-syntax-highlighter'
-import {dark} from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { CopyBlock } from 'react-code-blocks';
 
 const SUPABASE_URL = "https://qqlfwjdpxnpoopgibsbm.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbGZ3amRweG5wb29wZ2lic2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDE0MDM0MjYsImV4cCI6MjAxNjk3OTQyNn0.FfCGI17DLv3Ejsno5--5XyfzCQtCLnoyeTf2cxGgOvc";
@@ -46,8 +44,8 @@ type EditInstruction = {
 
 type Change = {
   filepath: string
-  search_block: string
-  replace_block: string
+  searchBlock: string
+  replaceBlock: string
 }
 
 type NewFile = {
@@ -73,6 +71,8 @@ export default function App(){
   let [email, setEmail] = useState<string>("");
   let [sentCode, setSentCode] = useState<boolean>(false);
   let [otpCode, setOtpCode] = useState<string>("");
+
+  let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
 
   let [loading, setLoading] = useState<boolean>(false);
   const posthog = usePostHog();
@@ -117,6 +117,8 @@ export default function App(){
             }]
           }
         });
+      } else if (message.type == "processRequest") {
+        processRequestWithSnippets(message.content.snippets);
       }
     });
     VSCodeMessage.postMessage({
@@ -127,8 +129,11 @@ export default function App(){
 
 
   // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
-
   let processRequest = async () => {
+    await processRequestWithSnippets(snippets);
+  }
+
+  let processRequestWithSnippets = async (snippets: Snippet[]) => {
     console.log("Current environment: ", process.env.NODE_ENV);
     let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "";
 
@@ -173,6 +178,7 @@ export default function App(){
               if(parsedChunk["type"] === "plans"){
                 setPlans(parsedChunk["plans"]);
               } else if (parsedChunk["type"] === "change") { // this is a change
+                console.log("Processing change: ", parsedChunk);
                 setPlans((plans) => {
                   let newPlans = structuredClone(plans);
                   newPlans[0]["editInstructions"][parsedChunk["index"]] = parsedChunk["instruction"];
@@ -195,6 +201,30 @@ export default function App(){
     }
     console.log("Reached the end of the function.");
     setLoading(false);
+  }
+
+  let getMatchingLanguageFromFilepath = (filepath: string) => {
+    snippets.forEach((snippet) => {
+      if(snippet.filepath == filepath) {
+        return snippet.language;
+      }
+    });
+    return "text";
+  }
+
+  let addSnippetsFromVectors = (query: string) => {
+    VSCodeMessage.postMessage(() => { // ask for a response to be sent back
+
+    });
+  }
+
+  let addWorkspaceAndProcessRequest = () => {
+    VSCodeMessage.postMessage({
+      type: "getWorkspaceData",
+      content: {
+        runProcessRequest: true
+      }
+    });
   }
 
   let deleteSnippet = (index: number) => {
@@ -276,32 +306,33 @@ export default function App(){
     })
   }
 
-  // if(!user) {
-  //   if(sentCode){
-  //     return (
-  //       <Container m="sm">
-  //         <TextInput value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="OTP Code"></TextInput>
-  //         <Button disabled={loading} onClick={() => verifyCode()}>Confirm code</Button>
-  //         {loading && <Loader/>}
-  //       </Container>
-  //     )
-  //   } else {
-  //     return (
-  //       <Container m="sm">
-  //         <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"></TextInput>
-  //         <Button disabled={loading} onClick={() => sendCode()}>Send Code</Button>
-  //         {loading && <Loader/>}
-  //       </Container>
-  //     )
-  //   }
-  // }
+  if(!user) {
+    if(sentCode){
+      return (
+        <Container m="sm">
+          <TextInput value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="OTP Code"></TextInput>
+          <Button disabled={loading} onClick={() => verifyCode()}>Confirm code</Button>
+          {loading && <Loader/>}
+        </Container>
+      )
+    } else {
+      return (
+        <Container m="sm">
+          <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"></TextInput>
+          <Button disabled={loading} onClick={() => sendCode()}>Send Code</Button>
+          {loading && <Loader/>}
+        </Container>
+      )
+    }
+  }
 
   return (
     <Container>
       <Textarea onChange={(e) => setQuery(e.target.value)} value={query}>
       </Textarea>
       {loading && <Loader/>}
-      <Container m="sm">
+
+      <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
             <details>
@@ -313,8 +344,11 @@ export default function App(){
             </Button>
           </Card>
         ))}
+        <Overlay opacity={0.6}/>
       </Container>
-      <Button onClick={() => processRequest()}>Process request</Button>
+
+      <Checkbox label="Add all current files in workspace:" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
+      <Button onClick={() => addEverythingFromWorkspace ? processRequest() : addWorkspaceAndProcessRequest()}>Process request</Button>
       {error && <Box color="red">
         {error}
       </Box>}
@@ -341,17 +375,23 @@ export default function App(){
                         <Card>
                           <Text style={{fontWeight: "bold"}}>{changeItem.filepath}</Text>
                           <Box m="sm" bg="red">
-                            <code>
-                              {changeItem.search_block}
-                            </code>
+                            Replace:
+                            <CopyBlock
+                              text={changeItem.searchBlock}
+                              language={getMatchingLanguageFromFilepath(changeItem.filepath)}
+                              wrapLongLines
+                            />
                           </Box>
                           <Box m="sm" bg="green">
-                            <code>
-                              {changeItem.replace_block}
-                            </code>
+                            with: 
+                            <CopyBlock
+                              text={changeItem.replaceBlock}
+                              language={getMatchingLanguageFromFilepath(changeItem.filepath)}
+                              wrapLongLines
+                            />
                           </Box>
 
-                          <Button onClick={() => sendChange(changeItem.filepath, changeItem.search_block, changeItem.replace_block)}>Accept change</Button>
+                          <Button onClick={() => sendChange(changeItem.filepath, changeItem.searchBlock, changeItem.replaceBlock)}>Accept change</Button>
                         </Card>
                       ))}
                     </Box>}
