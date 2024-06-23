@@ -14,10 +14,16 @@ import { PostHogProvider } from 'posthog-js/react';
 const root = ReactDOM.createRoot(
   document.getElementById('root') as HTMLElement
 );
+
+const posthogOptions = {
+  api_host: process.env.REACT_APP_PUBLIC_POSTHOG_HOST
+}
+
 root.render(
   <React.StrictMode>
     <PostHogProvider
-      apiKey={""}
+      apiKey={process.env.REACT_APP_PUBLIC_POSTHOG_KEY}
+      options={posthogOptions}
     >
       <MantineProvider defaultColorScheme="dark">
         <Notifications/>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Container, Button, Text, TextInput, Textarea, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
+import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
-import { createClient } from '@supabase/supabase-js';
+import { User, createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
@@ -67,7 +67,7 @@ export default function App(){
 
   let [error, setError] = useState<string | undefined>();
 
-  let [user, setUser] = useState<any>(false);
+  let [user, setUser] = useState<User>();
   let [email, setEmail] = useState<string>("");
   let [sentCode, setSentCode] = useState<boolean>(false);
   let [otpCode, setOtpCode] = useState<string>("");
@@ -127,6 +127,17 @@ export default function App(){
     // TODO: listen for a change in the authentication state
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      console.log("PostHog identified user.")
+      posthog?.identify(
+        user.id, {
+          email: user.email
+        }
+      );
+    }
+  }, [posthog, user]);
+
 
   // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
   let processRequest = async () => {
@@ -134,12 +145,17 @@ export default function App(){
   }
 
   let processRequestWithSnippets = async (snippets: Snippet[]) => {
+    posthog?.capture("process_snippets");
+    setError("");
+
     console.log("Current environment: ", process.env.NODE_ENV);
     let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
     try {
+      console.log("Sending session: ", authSession.data.session);
+      
       let response = await fetch(url, {
         body: JSON.stringify({
           snippets: snippets,
@@ -241,7 +257,7 @@ export default function App(){
     const { data, error } = await supabase.auth.signInWithOtp({
       email: email,
       options: {
-        shouldCreateUser: true
+        shouldCreateUser: false
       }
     });
 
@@ -286,6 +302,8 @@ export default function App(){
   }
 
   let sendChange = (filepath: string, search_block: string, replace_block: string) => {
+    posthog?.capture("send_change");
+
     VSCodeMessage.postMessage({
       type: "replaceSnippet",
       content: {
@@ -313,6 +331,8 @@ export default function App(){
           <TextInput value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="OTP Code"></TextInput>
           <Button disabled={loading} onClick={() => verifyCode()}>Confirm code</Button>
           {loading && <Loader/>}
+          <br/>
+          <Button onClick={() => setSentCode(false)} variant={'outline'}>Go back</Button>
         </Container>
       )
     } else {
@@ -320,6 +340,8 @@ export default function App(){
         <Container m="sm">
           <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"></TextInput>
           <Button disabled={loading} onClick={() => sendCode()}>Send Code</Button>
+          <br/>
+          <p style={{fontSize: 12}}>60 second wait time required between emails.</p>
           {loading && <Loader/>}
         </Container>
       )
@@ -327,12 +349,12 @@ export default function App(){
   }
 
   return (
-    <Container>
-      <Textarea onChange={(e) => setQuery(e.target.value)} value={query}>
+    <Stack p={2} mt={6}>
+      <Textarea onChange={(e) => setQuery(e.target.value)} value={query} placeholder={"Query"}>
       </Textarea>
       {loading && <Loader/>}
 
-      <Container m="sm" opacity="80">
+      {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
             <details>
@@ -344,11 +366,13 @@ export default function App(){
             </Button>
           </Card>
         ))}
-        <Overlay opacity={0.6}/>
-      </Container>
+        {/* <Overlay opacity={0.6}/> */}
+      </Container>}
 
-      <Checkbox label="Add all current files in workspace:" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
-      <Button onClick={() => addEverythingFromWorkspace ? processRequest() : addWorkspaceAndProcessRequest()}>Process request</Button>
+      {addEverythingFromWorkspace && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
+
+      <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
+      <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
       {error && <Box color="red">
         {error}
       </Box>}
@@ -402,6 +426,6 @@ export default function App(){
           </Tabs.Panel>
         ))}
       </Tabs>
-    </Container>
+    </Stack>
   );
 }

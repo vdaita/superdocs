@@ -121,8 +121,10 @@ Bun.serve({
 
         const url = new URL(req.url);
         // console.log("Full request: ", req);
+        console.log("Received request to: ", req.url);
 
         if (req.method === "OPTIONS"){
+            console.log("Options request received");
             const res = new Response('Departed', CORS_HEADERS);
             return res;
         }
@@ -159,10 +161,13 @@ Bun.serve({
             });
     
             try {
+                console.log("Tries validating: ", reqJson);
+
                 const user = await jwtVerify(
-                    reqJson["session"]["accessToken"],
+                    reqJson["session"]["access_token"],
                     new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
                 );
+                console.log("User verified: ", user);
                 // Either user is verified or this fails.
             } catch (e) {
                 console.error("Token validation failed: ", e);
@@ -293,11 +298,13 @@ Bun.serve({
 
                                 let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
                                 fixedSearchReplaces.forEach((fsr) => {
-                                    newInstruction.changes?.push({
-                                        filepath: fsr.filepath,
-                                        searchBlock: fsr.searchBlock,
-                                        replaceBlock: fsr.replaceBlock
-                                    });
+                                    if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
+                                        newInstruction.changes?.push({
+                                            filepath: fsr.filepath,
+                                            searchBlock: fsr.searchBlock,
+                                            replaceBlock: fsr.replaceBlock
+                                        });
+                                    }
                                 });
                                 newInstruction.changesCompleted = true;
                                 controller.enqueue(
