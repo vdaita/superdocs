@@ -3,9 +3,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import TerminalTool from './tools/terminal';
-import {replaceTextInFile, writeToFile} from './tools/finteract';
-
-import {saveChanges, showChanges, revertChanges} from './tools/change_demo';
+import * as fs from 'fs';
   
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -28,22 +26,22 @@ export function activate(context: vscode.ExtensionContext) {
 // This method is called when your extension is deactivated
 export function deactivate() {}
 
+type Snippet = {
+	filepath: string
+	code: string
+	language: string
+  }
+  
+
 class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
 	private terminalTool?: TerminalTool;
-	private timeLastResponseProcessed?: number;
-	private mostRecentResponse?: any;
-	private messages?: any[];
-
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _context: vscode.ExtensionContext
 	) {
 		this.terminalTool = new TerminalTool();
-		this.messages = [];
-		this.timeLastResponseProcessed = 0;
-		this.mostRecentResponse = "";
 	 }
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
@@ -89,21 +87,74 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 
 		webviewView.webview.onDidReceiveMessage(data => {
 			console.log("Received message from frontend: ", data);
-			if(data.type == "replaceSnippet"){
-				replaceTextInFile(data.content.originalCode, data.content.newCode, data.content.filepath);
-			} else if (data.type == "writeFile") {
-				writeToFile(data.content.newCode, data.content.filepath);
+			switch(data.type) {
+				case "startedWebview":
+					webviewView.webview.postMessage({
+						type: "context",
+						content: {
+							telemetryAllowed: superdocsConfig.get("telemetryAllowed"),
+
+						}
+					})
+					break;
+			}
+			if(data.type === "replaceSnippet"){
+				let joinedFilepath = data.filepath;
+				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				let file = fs.readFileSync(joinedFilepath).toString("utf-8");
+				file = file.replace(data.content.originalCode, data.content.newCode);
+				fs.writeFileSync(joinedFilepath, file);
+			} else if (data.type === "writeFile") {
+				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				fs.writeFileSync(joinedFilepath, data.content.code);
+			} else if (data.type === "semanticSearch") {
+				let requestString = data.query;
+				// Ask the backend for relevant queries that should be applied
+			} else if (data.type === "getWorkspaceData") {
+				(async () => {
+					let files: Snippet[] = [];
+					const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path;
+
+					for(const tabGroup of vscode.window.tabGroups.all){
+						for(const tab of tabGroup.tabs) {
+							if(tab.input instanceof vscode.TabInputText) {
+								let document = await vscode.workspace.openTextDocument(tab.input.uri.fsPath);
+								let text = document.getText();
+
+								if(text.length > 17000) {
+									vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
+								} else {
+									files.push({
+										filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
+										code: document.getText(),
+										language: document.languageId,
+									});
+									// if a file exceeds a certain character count, don't add it
+								}
+							}
+						}
+					}
+					webviewView.webview.postMessage({
+						type: "processRequest",
+						content: {
+							snippets: files
+						}
+					});
+	
+					// TODO: add a check for gitignore
+				})();				
 			}
 		});
 
 		let addSnippet = vscode.commands.registerCommand("superdocs.addSnippet", () => {
 			console.log("Selecting text");
+			const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path
+
 			const selection = vscode.window.activeTextEditor?.selection;
 			const selectedText = vscode.window.activeTextEditor?.document.getText(selection);
 			const language = vscode.window.activeTextEditor?.document.languageId;
-			const filepath = vscode.window.activeTextEditor?.document.uri.fsPath;
-			const directory = vscode.workspace.workspaceFolders![0].uri.path;
-			
+			const filepath = path.relative(workspaceDirectory, vscode.window.activeTextEditor?.document.uri.fsPath!);
+						
 			webviewView.webview.postMessage({
 				type: "snippet",
 				content: {
@@ -112,36 +163,11 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					startIndex: undefined,
 					endIndex: undefined,
 					filepath: filepath,
-					directory: directory
+					directory: workspaceDirectory
 				}
 			});
 		});
 
-		let sendDirectory = vscode.commands.registerCommand("superdocs.sendDirectory", () => {
-			const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
-		
-			const apiKey = superdocsConfig.get("apiKey");
-			const apiUrl = superdocsConfig.get("apiUrl");
-			const modelName = superdocsConfig.get("modelName");
-	
-			const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
-	
-			if(!apiKey || !apiUrl){
-				vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
-				return;
-			}
-	
-			webviewView.webview.postMessage({
-				type: "info",
-				content: {
-					directory: vscode.workspace.workspaceFolders![0].uri.path,
-					apiKey: apiKey,
-					apiUrl: apiUrl,
-					modelName: modelName,
-					auxiliaryModelName: auxiliaryModelName
-				}
-			})
-		})
 
 		let sendTerminal = vscode.commands.registerCommand("superdocs.sendTerminal", async () => {
 			let terminalContent = await this.terminalTool?.getTerminalContent();
@@ -158,7 +184,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		});
 
 		this._context.subscriptions.push(addSnippet);
-		this._context.subscriptions.push(sendDirectory);
 		this._context.subscriptions.push(sendTerminal);
 	}
 

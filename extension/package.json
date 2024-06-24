@@ -15,25 +15,10 @@
     "configuration": {
       "title": "Superdocs",
       "properties": {
-        "superdocs.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "API Key for the Coder API"
-        },
-        "superdocs.apiUrl": {
-          "type": "string",
-          "default": "https://api.openai.com/v1",
-          "description": "Base API Url for the LLM API (must be OpenAI compatible)"
-        },
-        "superdocs.modelName": {
-          "type": "string",
-          "default": "gpt-4-1106-preview",
-          "description": "Model Name"
-        },
-        "superdocs.auxiliaryModelName": {
-          "type": "string",
-          "default": "gpt-3.5-turbo-1106",
-          "description": "Alternative Model Name"
+        "superdocs.telemetryAllowed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow telemetry"
         }
       }
     },
@@ -96,7 +81,10 @@
     "axios": "^1.6.0",
     "brx-node": "^0.4.8-development",
     "express": "^4.18.2",
+    "hnswlib-node": "^3.0.0",
     "node-fetch": "^3.3.2",
-    "socket.io": "^4.7.2"
+    "posthog-js": "^1.131.4",
+    "socket.io": "^4.7.2",
+    "string-similarity-js": "^2.1.4"
   }
 }
