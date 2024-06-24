@@ -120,6 +120,10 @@ export default function App(){
       } else if (message.type == "processRequest") {
         processRequestWithSnippets(message.content.snippets);
       }
+
+      supabase.auth.onAuthStateChange((event, session) => {
+        setUser(session!.user);
+      });
     });
     VSCodeMessage.postMessage({
       type: "startedWebview"
@@ -155,7 +159,8 @@ export default function App(){
     setLoading(true);
     try {
       console.log("Sending session: ", authSession.data.session);
-      
+      console.log("Sending snippets and query: ", snippets, query);
+
       let response = await fetch(url, {
         body: JSON.stringify({
           snippets: snippets,
@@ -352,14 +357,17 @@ export default function App(){
     <Stack p={2} mt={6}>
       <Textarea onChange={(e) => setQuery(e.target.value)} value={query} placeholder={"Query"}>
       </Textarea>
-      {loading && <Loader/>}
+      {loading && <Box>
+        <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews. Will be fixed.</Text>
+        <Loader/>
+      </Box>}
 
       {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
             <details>
               <summary>{item.filepath}</summary>
-              <EnhancedMarkdown message={`${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"}/>
+              <EnhancedMarkdown height={100} message={`${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"}/>
             </details>
             <Button onClick={() => deleteSnippet(index)}>
               Delete Snippet
@@ -376,7 +384,7 @@ export default function App(){
       {error && <Box color="red">
         {error}
       </Box>}
-    
+
       <Tabs value={"0"}>
         <Tabs.List>
           {plans.map((item, index) => (
@@ -388,7 +396,7 @@ export default function App(){
         {plans.map((item, index) => (
           <Tabs.Panel value={index.toString()}>
             <Badge>Message</Badge>
-            <EnhancedMarkdown message={item.message}></EnhancedMarkdown>
+            <EnhancedMarkdown message={item.message} height={40}></EnhancedMarkdown>
             {item.editInstructions.length > 0 && <Box>
               <Badge>Edits</Badge>
               {item.editInstructions.map((instructionItem, instructionIndex) => (

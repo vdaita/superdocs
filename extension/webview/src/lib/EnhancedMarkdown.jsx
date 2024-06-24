@@ -7,12 +7,13 @@ import {Box, Group, Button, Text, Badge} from "@mantine/core";
 import { VSCodeMessage } from './VSCodeMessage'
 import {CopyToClipboard} from 'react-copy-to-clipboard';
 
-export default function EnhancedMarkdown({ message }) {
+export default function EnhancedMarkdown({ message, height }) {
 
     console.log("Received message in EnhancedMarkdown: ", message);
 
     return (
         <Markdown
+            style={{height: height, overflowY: 'scroll'}}
             children={message}
             components={{
                 code(props) {

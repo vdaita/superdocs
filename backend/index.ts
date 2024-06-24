@@ -161,13 +161,13 @@ Bun.serve({
             });
     
             try {
-                console.log("Tries validating: ", reqJson);
+                // console.log("Tries validating: ", reqJson);
 
                 const user = await jwtVerify(
                     reqJson["session"]["access_token"],
                     new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
                 );
-                console.log("User verified: ", user);
+                // console.log("User verified: ", user);
                 // Either user is verified or this fails.
             } catch (e) {
                 console.error("Token validation failed: ", e);

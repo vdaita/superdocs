@@ -113,6 +113,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			} else if (data.type === "getWorkspaceData") {
 				(async () => {
 					let files: Snippet[] = [];
+					const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path;
+
 					for(const tabGroup of vscode.window.tabGroups.all){
 						for(const tab of tabGroup.tabs) {
 							if(tab.input instanceof vscode.TabInputText) {
@@ -123,7 +125,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 									vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
 								} else {
 									files.push({
-										filepath: tab.input.uri.fsPath,
+										filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
 										code: document.getText(),
 										language: document.languageId,
 									});
