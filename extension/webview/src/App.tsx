@@ -153,7 +153,7 @@ export default function App(){
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "http://superdocs-m4zs.onrender.com/";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
