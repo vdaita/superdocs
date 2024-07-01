@@ -143,6 +143,8 @@ const POST = async (req: VercelRequest) => {
         let snippets: Snippet[] = reqJson["snippets"];
         let filepaths: string[] = [];
         snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
+
+        let textEncoder = new TextEncoder();
         
         let unifiedSnippets: Snippet[] = [];
         let files = new Map();
@@ -215,10 +217,12 @@ const POST = async (req: VercelRequest) => {
                         });
                     });
                     plan = newPlan;
-                    controller.enqueue(JSON.stringify({
+                    let encodedPlans = textEncoder.encode(JSON.stringify({
                         type: "plans",
                         plans: [plan]
                     }) + "<SDSEP>");
+                        
+                    controller.enqueue(encodedPlans);
                 }
 
                 // let planResponse = await together.chat.completions.create({
@@ -244,10 +248,12 @@ const POST = async (req: VercelRequest) => {
                 //     })
                 // }
 
-                controller.enqueue(JSON.stringify({
-                    type: "plans", 
+                let encodedPlans = textEncoder.encode(JSON.stringify({
+                    type: "plans",
                     plans: [plan]
                 }) + "<SDSEP>");
+                    
+                controller.enqueue(encodedPlans);
 
                 let instructionProcessingRequests: Promise<EditInstruction>[] = [];
                 // const emitter = new EventEmitter();
@@ -287,22 +293,21 @@ const POST = async (req: VercelRequest) => {
                                 newInstruction.changeUpdate = diffMd;
                                 // emitter.emit(i.toString(), JSON.stringify(newInstruction));
                                 
-                                controller.enqueue(
-                                    JSON.stringify({
-                                        type: "change",
-                                        index: i,
-                                        instruction: newInstruction
-                                    }) + "<SDSEP>"
-                                );
-                                // console.log("Sending update from index: ", i);
-                            }
-                            controller.enqueue(
-                                JSON.stringify({
+                                let encodedChange = textEncoder.encode(JSON.stringify({
                                     type: "change",
                                     index: i,
                                     instruction: newInstruction
-                                }) + "<SDSEP>"
-                            );
+                                }) + "<SDSEP>");
+                                controller.enqueue(encodedChange);
+                                // console.log("Sending update from index: ", i);
+                            }
+
+                            let encodedChange = textEncoder.encode(JSON.stringify({
+                                type: "change",
+                                index: i,
+                                instruction: newInstruction
+                            }) + "<SDSEP>");
+                            controller.enqueue(encodedChange);
 
                             let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
                             fixedSearchReplaces.forEach((fsr) => {
@@ -315,13 +320,13 @@ const POST = async (req: VercelRequest) => {
                                 }
                             });
                             newInstruction.changesCompleted = true;
-                            controller.enqueue(
-                                JSON.stringify({
-                                    type: "change",
-                                    index: i,
-                                    instruction: newInstruction
-                                }) + "<SDSEP>"
-                            );
+
+                            encodedChange = textEncoder.encode(JSON.stringify({
+                                type: "change",
+                                index: i,
+                                instruction: newInstruction
+                            }) + "<SDSEP>");
+                            controller.enqueue(encodedChange);
                             // emitter.emit(i.toString(), JSON.stringify(newInstruction));
 
                             return newInstruction;
@@ -336,10 +341,11 @@ const POST = async (req: VercelRequest) => {
                 console.log("Completed all edit instructions");
                 plan.editInstructions = changedInstructions;
                 // Send these instructions back 
-                controller.enqueue(JSON.stringify({
+                encodedPlans = JSON.stringify({
                     type: "plans", 
                     plans: [plan]
-                }) + "<SDSEP>");
+                }) + "<SDSEP>";
+                controller.enqueue(encodedPlans);
             }
         })
 
