@@ -11,7 +11,7 @@ import { GoogleGenerativeAI, type GenerationConfig } from "@google/generative-ai
 // @ts-ignore
 import { Transform, TransformCallback } from 'stream'; 
 
-console.log("Hello via Bun!");
+console.log("Hello via Node!");
 const together = new OpenAI({
     baseURL: "https://api.together.xyz/",
     apiKey: process.env.TOGETHER_API_KEY
@@ -59,6 +59,10 @@ type Update = {
     executionIndex: number,
     newEditInstruction: EditInstruction
 }
+
+export const config = {
+    runtime: 'nodejs',
+};
 
 // type Update = {
 //     section: "plan" | "change"
@@ -115,9 +119,8 @@ function parseBulletPointPlan(input: string) {
     };
 }
 
-Bun.serve({
-    port: 3001,
-    async fetch(req) {
+// Bun.serve({
+export async function GET(req: Request){
 
         const url = new URL(req.url);
         // console.log("Full request: ", req);
@@ -338,5 +341,4 @@ Bun.serve({
             return new Response(stream, CORS_HEADERS);
         }
         return new Response("404!", CORS_HEADERS);
-    },
-  });
+}
