@@ -167,7 +167,7 @@ export default function App(){
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "http://superdocs-sand.vercel.app";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "https://superdocs-sand.vercel.app/api/index/";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
