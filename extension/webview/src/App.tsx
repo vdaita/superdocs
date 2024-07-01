@@ -167,7 +167,7 @@ export default function App(){
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "http://superdocs-m4zs.onrender.com/";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "http://superdocs-sand.vercel.app";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
@@ -405,7 +405,7 @@ export default function App(){
 
       <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
       <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
-      <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button>
+      {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
 
       {error && <Box color="red">
         {error}
