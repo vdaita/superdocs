@@ -1,5 +1,7 @@
+// @ts-nocheck
+
 import OpenAI from 'openai';
-import Groq from 'groq-sdk';
+// import Groq from 'groq-sdk';
 import { distance, closest } from 'fastest-levenshtein';
 import { jwtVerify } from 'jose';
 import { getFixedSearchReplace } from '../utils/diff';
@@ -7,20 +9,25 @@ import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT, PLAN_PROMPT, PLAN_PROMPT_BULLET_PO
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { GoogleGenerativeAI, type GenerationConfig } from "@google/generative-ai";
-import type {VercelRequest, VercelResponse} from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 // @ts-ignore
-import process from 'process';
+// import process from 'process';
 
 // @ts-ignore
 import { Transform, TransformCallback } from 'stream'; 
 
-console.log("Hello via Bun!");
+console.log("Hello via Node!");
+
+export const config = {
+    runtime: 'edge'
+};
+
 const together = new OpenAI({
     baseURL: "https://api.together.xyz/",
     apiKey: process.env.TOGETHER_API_KEY
 });
-const groq = new Groq();
+// const groq = new Groq );
 const openai = new OpenAI();
 const googleGenAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 
@@ -119,225 +126,226 @@ function parseBulletPointPlan(input: string) {
     };
 }
 
-export async function POST(req: Request){
+const POST = async (req: VercelRequest) => {
+    console.log("Full request: ", req);
 
-        const url = new URL(req.url!);
-        // console.log("Full request: ", req);
-        console.log("Received request to: ", req.url);
+    const url = new URL(req.url!);
+    console.log("Received request to: ", req.url);
 
-        if (req.method === "OPTIONS"){
-            console.log("Options request received");
-            const res = new Response('Departed', CORS_HEADERS);
-            return res;
+    if (req.method === "OPTIONS"){
+        console.log("Options request received");
+        const res = new Response('Departed', CORS_HEADERS);
+        return res;
+    }
+
+        // console.log("Request body: ", req.body);
+        const reqJson = await req.json();
+        let snippets: Snippet[] = reqJson["snippets"];
+        let filepaths: string[] = [];
+        snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
+        
+        let unifiedSnippets: Snippet[] = [];
+        let files = new Map();
+        filepaths.forEach((filepath) => {
+            let codeChunks: string[] = [];
+            let lang: string = "";            
+            snippets.forEach((snippet) => {
+                if(snippet.filepath === filepath) {
+                    codeChunks.push(snippet.code);
+                    lang = snippet.language;
+                }
+            });
+            unifiedSnippets.push({
+                filepath: filepath,
+                code: codeChunks.join("\n----\n"),
+                language: lang
+            });
+            files.set(filepath, codeChunks.join("\n----\n"));
+        });
+
+        let fileContextStr = "";
+        unifiedSnippets.forEach((snippet) => {
+            fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
+        });
+
+        try {
+            // console.log("Tries validating: ", reqJson);
+
+            const user = await jwtVerify(
+                reqJson["session"]["access_token"],
+                new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
+            );
+            // console.log("User verified: ", user);
+            // Either user is verified or this fails.
+        } catch (e) {
+            console.error("Token validation failed: ", e);
+            throw "Token validation failed."; // Error out completely
         }
 
-        if(url.pathname === "/get_changes") {
-            // console.log("Request body: ", req.body);
-            const reqJson = await req.json();
-            let snippets: Snippet[] = reqJson["snippets"];
-            let filepaths: string[] = [];
-            snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
-            
-            let unifiedSnippets: Snippet[] = [];
-            let files = new Map();
-            filepaths.forEach((filepath) => {
-                let codeChunks: string[] = [];
-                let lang: string = "";            
-                snippets.forEach((snippet) => {
-                    if(snippet.filepath === filepath) {
-                        codeChunks.push(snippet.code);
-                        lang = snippet.language;
-                    }
+        const stream = new ReadableStream({
+            async start(controller) {
+                let planResponse = await openai.chat.completions.create({
+                    messages: [{
+                        role: "system",
+                        content: PLAN_PROMPT_BULLET_POINTS
+                    }, {
+                        role: "user",
+                        content: `Files: ${fileContextStr} \n \nRequest: ${reqJson['request']}`
+                    }],
+                    model: "gpt-4o",
+                    stream: true
                 });
-                unifiedSnippets.push({
-                    filepath: filepath,
-                    code: codeChunks.join("\n----\n"),
-                    language: lang
-                });
-                files.set(filepath, codeChunks.join("\n----\n"));
-            });
-    
-            let fileContextStr = "";
-            unifiedSnippets.forEach((snippet) => {
-                fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
-            });
-    
-            try {
-                // console.log("Tries validating: ", reqJson);
-
-                const user = await jwtVerify(
-                    reqJson["session"]["access_token"],
-                    new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
-                );
-                // console.log("User verified: ", user);
-                // Either user is verified or this fails.
-            } catch (e) {
-                console.error("Token validation failed: ", e);
-                throw "Token validation failed."; // Error out completely
-            }
-    
-            const stream = new ReadableStream({
-                async start(controller) {
-                    let planResponse = await openai.chat.completions.create({
-                        messages: [{
-                            role: "system",
-                            content: PLAN_PROMPT_BULLET_POINTS
-                        }, {
-                            role: "user",
-                            content: `Files: ${fileContextStr} \n \nRequest: ${reqJson['request']}`
-                        }],
-                        model: "gpt-4o",
-                        stream: true
-                    });
-                    let plan: Plan = {
-                        message: "",
-                        editInstructions: [],
-                    }; 
-                    let planText = "";
-                    for await(const chunk of planResponse) {
-                        planText += chunk.choices[0]?.delta?.content || "";
-                        let bpPlan = parseBulletPointPlan(planText);
-                        let newPlan: Plan = {
-                            message: bpPlan.topMessage,
-                            editInstructions: []
-                        }                        
-                        bpPlan.subMessages.forEach((inst) => {
-                            newPlan.editInstructions.push({
-                                instruction: inst,
-                                changesCompleted: false,
-                                changeUpdate: ""
-                            });
+                let plan: Plan = {
+                    message: "",
+                    editInstructions: [],
+                }; 
+                let planText = "";
+                for await(const chunk of planResponse) {
+                    planText += chunk.choices[0]?.delta?.content || "";
+                    let bpPlan = parseBulletPointPlan(planText);
+                    let newPlan: Plan = {
+                        message: bpPlan.topMessage,
+                        editInstructions: []
+                    }                        
+                    bpPlan.subMessages.forEach((inst) => {
+                        newPlan.editInstructions.push({
+                            instruction: inst,
+                            changesCompleted: false,
+                            changeUpdate: ""
                         });
-                        plan = newPlan;
-                        controller.enqueue(JSON.stringify({
-                            type: "plans",
-                            plans: [plan]
-                        }) + "<SDSEP>");
-                    }
-
-                    // let planResponse = await together.chat.completions.create({
-                    //     messages: [{
-                    //         role: "system",
-                    //         content: PLAN_PROMPT}, 
-                    //     {
-                    //         role: "user",
-                    //         content: `Files: ${fileContextStr} \n \nRequest: ${reqJson['request']}`
-                    //     }],
-                    //     // model: "mixtral-8x7b-32768",
-                    //     // response_format: { type: "json_object" }
-                    //     // @ts-ignore for Together schema
-                    //     response_format: { type: 'json_object', schema: zodToJsonSchema(planSchema, 'plan')},
-                    //     model: "mistralai/Mixtral-8x7B-Instruct-v0.1"
-                    // });
-                    // let planResult = await geminiFlash.generateContent([`${PLAN_PROMPT}\nFiles: ${fileContextStr}\nRequest: ${reqJson['request']}`]);
-                    // let planResponse = planResult.response.text();
-                    // for(var i = 0; i < parsedPlanResponse["editInstructions"].length; i++){
-                    //     plan.editInstructions.push({
-                    //         instruction: parsedPlanResponse["editInstructions"][i],
-                    //         changesCompleted: false
-                    //     })
-                    // }
-    
+                    });
+                    plan = newPlan;
                     controller.enqueue(JSON.stringify({
-                        type: "plans", 
-                        plans: [plan]
-                    }) + "<SDSEP>");
-    
-                    let instructionProcessingRequests: Promise<EditInstruction>[] = [];
-                    // const emitter = new EventEmitter();
-                    
-
-                    for(var ii = 0; ii < plan.editInstructions.length; ii++) {
-                        instructionProcessingRequests.push(new Promise<EditInstruction>(async () => {
-                            let i = parseInt(ii.toString()); // This is to make sure that the index stays static.
-                            console.log("Starting request for edit at index ", i);
-                            let newInstruction: EditInstruction = {
-                                instruction: plan.editInstructions[i].instruction, 
-                                changesCompleted: false,
-                                changes: [],
-                                changeUpdate: ""
-                            };
-    
-                            try {
-                                const instResponse = await openai.chat.completions.create({
-                                    messages: [
-                                        {
-                                            "role": "system",
-                                            "content": AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
-                                        },
-                                        {
-                                            "role": "user",
-                                            "content": fileContextStr + `\n Implement the following and the following only. Other required steps will be completed elsewhere. Instruction: ${plan.editInstructions[i].instruction}`
-                                        }
-                                    ],
-                                    model: "gpt-4o",
-                                    stream: true
-                                });
-
-                                let diffMd = "";
-                                console.log("Getting ready to iterate through stream for: ", i);
-                                for await(const chunk of instResponse) {
-                                    diffMd += chunk.choices[0]?.delta?.content || "";
-                                    newInstruction.changeUpdate = diffMd;
-                                    // emitter.emit(i.toString(), JSON.stringify(newInstruction));
-                                    
-                                    controller.enqueue(
-                                        JSON.stringify({
-                                            type: "change",
-                                            index: i,
-                                            instruction: newInstruction
-                                        }) + "<SDSEP>"
-                                    );
-                                    // console.log("Sending update from index: ", i);
-                                }
-                                controller.enqueue(
-                                    JSON.stringify({
-                                        type: "change",
-                                        index: i,
-                                        instruction: newInstruction
-                                    }) + "<SDSEP>"
-                                );
-
-                                let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
-                                fixedSearchReplaces.forEach((fsr) => {
-                                    if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
-                                        newInstruction.changes?.push({
-                                            filepath: fsr.filepath,
-                                            searchBlock: fsr.searchBlock,
-                                            replaceBlock: fsr.replaceBlock
-                                        });
-                                    }
-                                });
-                                newInstruction.changesCompleted = true;
-                                controller.enqueue(
-                                    JSON.stringify({
-                                        type: "change",
-                                        index: i,
-                                        instruction: newInstruction
-                                    }) + "<SDSEP>"
-                                );
-                                // emitter.emit(i.toString(), JSON.stringify(newInstruction));
-    
-                                return newInstruction;
-                            } catch (e) {
-                                console.log("Error occurred: ", e);
-                                return newInstruction;
-                            }
-                        }));
-                    }
-
-                    let changedInstructions: EditInstruction[] = await Promise.all(instructionProcessingRequests);
-                    console.log("Completed all edit instructions");
-                    plan.editInstructions = changedInstructions;
-                    // Send these instructions back 
-                    controller.enqueue(JSON.stringify({
-                        type: "plans", 
+                        type: "plans",
                         plans: [plan]
                     }) + "<SDSEP>");
                 }
-            })
-    
-            return new Response(stream, CORS_HEADERS);
-        }
-        return new Response("404!", CORS_HEADERS);
-    }
+
+                // let planResponse = await together.chat.completions.create({
+                //     messages: [{
+                //         role: "system",
+                //         content: PLAN_PROMPT}, 
+                //     {
+                //         role: "user",
+                //         content: `Files: ${fileContextStr} \n \nRequest: ${reqJson['request']}`
+                //     }],
+                //     // model: "mixtral-8x7b-32768",
+                //     // response_format: { type: "json_object" }
+                //     // @ts-ignore for Together schema
+                //     response_format: { type: 'json_object', schema: zodToJsonSchema(planSchema, 'plan')},
+                //     model: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+                // });
+                // let planResult = await geminiFlash.generateContent([`${PLAN_PROMPT}\nFiles: ${fileContextStr}\nRequest: ${reqJson['request']}`]);
+                // let planResponse = planResult.response.text();
+                // for(var i = 0; i < parsedPlanResponse["editInstructions"].length; i++){
+                //     plan.editInstructions.push({
+                //         instruction: parsedPlanResponse["editInstructions"][i],
+                //         changesCompleted: false
+                //     })
+                // }
+
+                controller.enqueue(JSON.stringify({
+                    type: "plans", 
+                    plans: [plan]
+                }) + "<SDSEP>");
+
+                let instructionProcessingRequests: Promise<EditInstruction>[] = [];
+                // const emitter = new EventEmitter();
+                
+
+                for(var ii = 0; ii < plan.editInstructions.length; ii++) {
+                    instructionProcessingRequests.push(new Promise<EditInstruction>(async () => {
+                        let i = parseInt(ii.toString()); // This is to make sure that the index stays static.
+                        console.log("Starting request for edit at index ", i);
+                        let newInstruction: EditInstruction = {
+                            instruction: plan.editInstructions[i].instruction, 
+                            changesCompleted: false,
+                            changes: [],
+                            changeUpdate: ""
+                        };
+
+                        try {
+                            const instResponse = await openai.chat.completions.create({
+                                messages: [
+                                    {
+                                        "role": "system",
+                                        "content": AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": fileContextStr + `\n Implement the following and the following only. Other required steps will be completed elsewhere. Instruction: ${plan.editInstructions[i].instruction}`
+                                    }
+                                ],
+                                model: "gpt-4o",
+                                stream: true
+                            });
+
+                            let diffMd = "";
+                            console.log("Getting ready to iterate through stream for: ", i);
+                            for await(const chunk of instResponse) {
+                                diffMd += chunk.choices[0]?.delta?.content || "";
+                                newInstruction.changeUpdate = diffMd;
+                                // emitter.emit(i.toString(), JSON.stringify(newInstruction));
+                                
+                                controller.enqueue(
+                                    JSON.stringify({
+                                        type: "change",
+                                        index: i,
+                                        instruction: newInstruction
+                                    }) + "<SDSEP>"
+                                );
+                                // console.log("Sending update from index: ", i);
+                            }
+                            controller.enqueue(
+                                JSON.stringify({
+                                    type: "change",
+                                    index: i,
+                                    instruction: newInstruction
+                                }) + "<SDSEP>"
+                            );
+
+                            let fixedSearchReplaces = getFixedSearchReplace(files, diffMd);
+                            fixedSearchReplaces.forEach((fsr) => {
+                                if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
+                                    newInstruction.changes?.push({
+                                        filepath: fsr.filepath,
+                                        searchBlock: fsr.searchBlock,
+                                        replaceBlock: fsr.replaceBlock
+                                    });
+                                }
+                            });
+                            newInstruction.changesCompleted = true;
+                            controller.enqueue(
+                                JSON.stringify({
+                                    type: "change",
+                                    index: i,
+                                    instruction: newInstruction
+                                }) + "<SDSEP>"
+                            );
+                            // emitter.emit(i.toString(), JSON.stringify(newInstruction));
+
+                            return newInstruction;
+                        } catch (e) {
+                            console.log("Error occurred: ", e);
+                            return newInstruction;
+                        }
+                    }));
+                }
+
+                let changedInstructions: EditInstruction[] = await Promise.all(instructionProcessingRequests);
+                console.log("Completed all edit instructions");
+                plan.editInstructions = changedInstructions;
+                // Send these instructions back 
+                controller.enqueue(JSON.stringify({
+                    type: "plans", 
+                    plans: [plan]
+                }) + "<SDSEP>");
+            }
+        })
+
+        return new Response(stream, CORS_HEADERS);
+        // res.send(new Response(stream, CORS_HEADERS));
+}
+
+export default POST;
+// export default allowCors(handler);

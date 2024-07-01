@@ -167,7 +167,7 @@ export default function App(){
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "https://superdocs-sand.vercel.app/api/index/";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/index" : "https://superdocs-sand.vercel.app/api/index/";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
@@ -429,6 +429,11 @@ export default function App(){
                 <Box>
                   {instructionItem.instruction}
                   {instructionItem.changesCompleted && <Box>
+                      <details>
+                        <summary>View full text</summary>
+                        <p>{instructionItem.changeUpdate ? instructionItem.changeUpdate : "Not available."}</p>
+                      </details>
+
                       {instructionItem.changes?.map((changeItem, changeIndex) => (
                         <Card>
                           <Text style={{fontWeight: "bold"}}>{changeItem.filepath}</Text>
