@@ -99,13 +99,14 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					break;
 			}
 			if(data.type === "replaceSnippet"){
-				let joinedFilepath = data.filepath;
-				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				// let joinedFilepath = data.content.filepath;
+				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
 				let file = fs.readFileSync(joinedFilepath).toString("utf-8");
+				console.log("Trying to replace snippet in: ", joinedFilepath, data.content.originalCode, data.content.newCode);
 				file = file.replace(data.content.originalCode, data.content.newCode);
 				fs.writeFileSync(joinedFilepath, file);
 			} else if (data.type === "writeFile") {
-				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.filepath);
+				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
 				fs.writeFileSync(joinedFilepath, data.content.code);
 			} else if (data.type === "semanticSearch") {
 				let requestString = data.query;
@@ -137,7 +138,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					webviewView.webview.postMessage({
 						type: "processRequest",
 						content: {
-							snippets: files
+							snippets: files,
+							query: data.content.query
 						}
 					});
 	

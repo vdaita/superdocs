@@ -1,22 +1,20 @@
 {
-  "name": "backend",
-  "module": "index.ts",
-  "type": "module",
-  "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
-  "dependencies": {
-    "@google/generative-ai": "^0.12.0",
-    "events": "^3.3.0",
-    "fastest-levenshtein": "^1.0.16",
-    "fuzzball": "^2.1.2",
-    "groq-sdk": "^0.4.0",
-    "jose": "^5.4.0",
-    "openai": "^4.49.0",
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.23.1"
-  }
+    "license": "MIT",
+    "private": true,
+    "devDependencies": {
+        "@types/node": "^17.0.45",
+        "@vercel/node": "^2.9.6",
+        "typescript": "^4.7.3"
+    },
+    "dependencies": {
+        "@google/generative-ai": "^0.14.0",
+        "events": "^3.3.0",
+        "fastest-levenshtein": "^1.0.16",
+        "fuzzball": "^2.1.2",
+        "groq-sdk": "^0.5.0",
+        "jose": "^5.6.2",
+        "openai": "^4.52.2",
+        "zod": "^3.23.8",
+        "zod-to-json-schema": "^3.23.1"
+    }
 }

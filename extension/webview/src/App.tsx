@@ -75,6 +75,7 @@ export default function App(){
   let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
 
   let [loading, setLoading] = useState<boolean>(false);
+  let [abortController, setAbortController] = useState<AbortController | undefined>();
   const posthog = usePostHog();
 
   useEffect(() => {
@@ -108,7 +109,7 @@ export default function App(){
           }
           
           if(alreadyExists){
-            return prevSnippets;
+            return [...prevSnippets];
           } else {
             return [...prevSnippets, {
               code: message.content.code,
@@ -118,7 +119,7 @@ export default function App(){
           }
         });
       } else if (message.type == "processRequest") {
-        processRequestWithSnippets(message.content.snippets);
+        processRequestWithSnippets(message.content.snippets, message.content.query);
       }
 
       supabase.auth.onAuthStateChange((event, session) => {
@@ -145,21 +146,42 @@ export default function App(){
 
   // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
   let processRequest = async () => {
-    await processRequestWithSnippets(snippets);
+    await processRequestWithSnippets(snippets, query);
   }
 
-  let processRequestWithSnippets = async (snippets: Snippet[]) => {
+  let stopRequest = async () => {
+    if(abortController){
+      abortController.abort();
+      notifications.show({
+        message: "Cancelled the request."
+      });
+    } else {
+      notifications.show({
+        message: "No request to cancel"
+      })
+    }
+  }
+
+  let processRequestWithSnippets = async (snippets: Snippet[], query: string) => {
     posthog?.capture("process_snippets");
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "";
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/get_changes" : "http://superdocs-sand.vercel.app";
 
     let authSession = await supabase.auth.getSession();
     setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+    }, 5000);
+
     try {
       console.log("Sending session: ", authSession.data.session);
       console.log("Sending snippets and query: ", snippets, query);
+
+      const controller = new AbortController();
+      const signal = controller.signal;
+      setAbortController(controller);
 
       let response = await fetch(url, {
         body: JSON.stringify({
@@ -170,7 +192,8 @@ export default function App(){
         method: "POST",
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        signal: signal
       });
       console.log("Received response from server: ", response);
       if(response.ok){
@@ -233,7 +256,7 @@ export default function App(){
     return "text";
   }
 
-  let addSnippetsFromVectors = (query: string) => {
+  let addSnippetsFromVectors = (query: string) => { // TODO: start this when you have the vectorstore implemented
     VSCodeMessage.postMessage(() => { // ask for a response to be sent back
 
     });
@@ -243,7 +266,8 @@ export default function App(){
     VSCodeMessage.postMessage({
       type: "getWorkspaceData",
       content: {
-        runProcessRequest: true
+        runProcessRequest: true,
+        query: query
       }
     });
   }
@@ -381,6 +405,8 @@ export default function App(){
 
       <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
       <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
+      {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
+
       {error && <Box color="red">
         {error}
       </Box>}

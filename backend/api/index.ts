@@ -2,11 +2,15 @@ import OpenAI from 'openai';
 import Groq from 'groq-sdk';
 import { distance, closest } from 'fastest-levenshtein';
 import { jwtVerify } from 'jose';
-import { getFixedSearchReplace } from './diff';
-import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT, PLAN_PROMPT, PLAN_PROMPT_BULLET_POINTS } from './prompts';
+import { getFixedSearchReplace } from '../utils/diff';
+import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT, PLAN_PROMPT, PLAN_PROMPT_BULLET_POINTS } from '../utils/prompts';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { GoogleGenerativeAI, type GenerationConfig } from "@google/generative-ai";
+import type {VercelRequest, VercelResponse} from '@vercel/node';
+
+// @ts-ignore
+import process from 'process';
 
 // @ts-ignore
 import { Transform, TransformCallback } from 'stream'; 
@@ -115,11 +119,9 @@ function parseBulletPointPlan(input: string) {
     };
 }
 
-Bun.serve({
-    port: 3001,
-    async fetch(req) {
+export async function POST(req: Request){
 
-        const url = new URL(req.url);
+        const url = new URL(req.url!);
         // console.log("Full request: ", req);
         console.log("Received request to: ", req.url);
 
@@ -241,7 +243,7 @@ Bun.serve({
                         plans: [plan]
                     }) + "<SDSEP>");
     
-                    let instructionProcessingRequests = [];
+                    let instructionProcessingRequests: Promise<EditInstruction>[] = [];
                     // const emitter = new EventEmitter();
                     
 
@@ -338,5 +340,4 @@ Bun.serve({
             return new Response(stream, CORS_HEADERS);
         }
         return new Response("404!", CORS_HEADERS);
-    },
-  });
+    }
