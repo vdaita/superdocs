@@ -71,8 +71,8 @@ function parseDiff(diffString: string): SearchReplaceChange[] {
             } else if (line.startsWith("+")) {
                 replaceBlock += " " + line.slice(1) + "\n";
             } else {
-                searchBlock += line + "\n";
-                replaceBlock += line + "\n";
+                searchBlock += line.slice(1) + "\n";
+                replaceBlock += line.slice(1) + "\n";
             }
         }
 
