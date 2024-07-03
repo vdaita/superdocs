@@ -102,7 +102,7 @@ You always COMPLETELY IMPLEMENT the needed code!
 export const PLAN_PROMPT = `You are an intelligent coding assistant. 
 You can give a general message with an answer to the user and you can additionally provide edit instructions that will be completed by another bot. 
 Include new code in the message portion.
-Each of the edit instructions should be able to be executed in parallel.
+Each of the edit instructions should be able to be executed in parallel. This means at most one instruction per function.
 Output your response in the following JSON format:
 {
     message: "A string that describes a message that you want to send to the user describing your changes.",

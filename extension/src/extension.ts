@@ -122,7 +122,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 								let document = await vscode.workspace.openTextDocument(tab.input.uri.fsPath);
 								let text = document.getText();
 
-								if(text.length > 17000) {
+								if(text.length > 34000) {
 									vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
 								} else {
 									files.push({
