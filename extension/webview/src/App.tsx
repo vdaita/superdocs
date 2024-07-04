@@ -120,6 +120,8 @@ export default function App(){
         });
       } else if (message.type == "processRequest") {
         processRequestWithSnippets(message.content.snippets, message.content.query);
+      } else if (message.type == "predictObjective") {
+        
       }
 
       supabase.auth.onAuthStateChange((event, session) => {

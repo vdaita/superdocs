@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import TerminalTool from './tools/terminal';
 import * as fs from 'fs';
+import * as difflib from 'difflib';
   
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -37,12 +38,52 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
 	private terminalTool?: TerminalTool;
+
+	private intervalPrediction?: NodeJS.Timer;
+	private previousWorkspaceFiles: any;
+
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _context: vscode.ExtensionContext
 	) {
 		this.terminalTool = new TerminalTool();
 	 }
+
+	private async getWorkspaceDocuments() {
+		let files: Snippet[] = [];
+		const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path;
+
+		for(const tabGroup of vscode.window.tabGroups.all){
+			for(const tab of tabGroup.tabs) {
+				if(tab.input instanceof vscode.TabInputText) {
+					let document = await vscode.workspace.openTextDocument(tab.input.uri.fsPath);
+					let text = document.getText();
+
+					if(text.length > 34000) {
+						vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
+					} else {
+						files.push({
+							filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
+							code: document.getText(),
+							language: document.languageId,
+						});
+						// if a file exceeds a certain character count, don't add it
+					}
+				}
+			}
+		}
+		// TODO: add a check for gitignore
+
+		return files;
+	}
+
+	private documentListToMap(documents: Snippet[]) {
+		let documentMap = new Map();
+		documents.forEach((document) => {
+			documentMap.set(document.filepath, document.code);
+		});
+		return documentMap;
+	}
 
 	public resolveWebviewView(webviewView: vscode.WebviewView, context: vscode.WebviewViewResolveContext, _token: vscode.CancellationToken) {
 		console.log("Running resolveWebviewView");
@@ -60,30 +101,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		webviewView.webview.html = this._getHtmlForWebview(this._context);
 
 		const superdocsConfig = vscode.workspace.getConfiguration('superdocs');
-		
-		// const apiKey = superdocsConfig.get("apiKey");
-		// const apiUrl = superdocsConfig.get("apiUrl");
-		// const modelName = superdocsConfig.get("modelName");
-
-		// const auxiliaryModelName = superdocsConfig.get("auxiliaryModelName");
-
-		// if(!apiKey || !apiUrl){
-		// 	vscode.window.showErrorMessage("Superdocs requires your API Keys to work.");
-		// 	return;
-		// }
-
-		// webviewView.webview.postMessage({
-		// 	type: "info",
-		// 	content: {
-		// 		directory: vscode.workspace.workspaceFolders![0].uri.path,
-		// 		apiKey: apiKey,
-		// 		apiUrl: apiUrl,
-		// 		modelName: modelName,
-		// 		auxiliaryModelName: auxiliaryModelName
-		// 	}
-		// })
-
-		// Mkae sure there is an option to send the directory over manually.
 
 		webviewView.webview.onDidReceiveMessage(data => {
 			console.log("Received message from frontend: ", data);
@@ -93,9 +110,40 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						type: "context",
 						content: {
 							telemetryAllowed: superdocsConfig.get("telemetryAllowed"),
-
 						}
-					})
+					});
+
+					this.intervalPrediction = setInterval(async () => {
+						let currentWorkspaceFiles = await this.getWorkspaceDocuments();
+						let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
+						let changes = "";
+						
+						if(this.previousWorkspaceFiles){
+							// Find new documents that have been opened;
+							let previousWorkspaceMap = this.documentListToMap(this.previousWorkspaceFiles);
+							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
+								if(!previousWorkspaceMap.has(currentFilename)) {
+									changes += `Opened file: ${currentFilename}\n`;
+								} else {
+									let diff = difflib.unifiedDiff(previousWorkspaceMap.get(currentFilename).split("\n"), currentCode.split("\n"), {
+	
+									}).join("\n");
+									changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
+								}
+							}
+						}
+
+						if(changes.length === 0){
+							changes = "No changes detected";
+						}
+						
+						webviewView.webview.postMessage({
+							type: "recentChanges",
+							content: changes
+						});
+
+						this.previousWorkspaceFiles = currentWorkspaceFiles;
+					}, 10000);
 					break;
 			}
 			if(data.type === "replaceSnippet"){
@@ -110,31 +158,11 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				fs.writeFileSync(joinedFilepath, data.content.code);
 			} else if (data.type === "semanticSearch") {
 				let requestString = data.query;
+				
 				// Ask the backend for relevant queries that should be applied
 			} else if (data.type === "getWorkspaceData") {
 				(async () => {
-					let files: Snippet[] = [];
-					const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path;
-
-					for(const tabGroup of vscode.window.tabGroups.all){
-						for(const tab of tabGroup.tabs) {
-							if(tab.input instanceof vscode.TabInputText) {
-								let document = await vscode.workspace.openTextDocument(tab.input.uri.fsPath);
-								let text = document.getText();
-
-								if(text.length > 34000) {
-									vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
-								} else {
-									files.push({
-										filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
-										code: document.getText(),
-										language: document.languageId,
-									});
-									// if a file exceeds a certain character count, don't add it
-								}
-							}
-						}
-					}
+					let files = await this.getWorkspaceDocuments();
 					webviewView.webview.postMessage({
 						type: "processRequest",
 						content: {
@@ -142,8 +170,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 							query: data.content.query
 						}
 					});
-	
-					// TODO: add a check for gitignore
 				})();				
 			}
 		});
