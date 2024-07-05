@@ -137,9 +137,28 @@ const POST = async (req: VercelRequest) => {
         const res = new Response('Departed', CORS_HEADERS);
         return res;
     }
-
         // console.log("Request body: ", req.body);
         const reqJson = await req.json();
+
+        if(reqJson["type"] === "suggestChanges") {
+            let message = await openai.chat.completions.create({
+                model: "gpt-3.5-turbo",
+                message: [{
+                    "role": "system",
+                    "content": ""
+                }],
+                response_format: {
+                    type: "json_object"
+                }
+            });
+            message = message.choices[0].message.content;
+            message = JSON.parse(message);
+
+            return new Response({
+                possibleQueries: message["possibleQueries"]
+            }, CORS_HEADERS);
+        }
+
         let snippets: Snippet[] = reqJson["snippets"];
         let filepaths: string[] = [];
         snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
