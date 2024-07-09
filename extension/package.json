@@ -43,6 +43,10 @@
       {
         "command": "superdocs.sendTerminal",
         "title": "Superdocs: Add Terminal Content"
+      },
+      {
+        "command": "superdocs.openWebviewCommand",
+        "title": "Superdocs: Open Webview"
       }
     ],
     "menus": {

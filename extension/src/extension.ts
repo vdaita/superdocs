@@ -22,6 +22,13 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 	}));
 
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+		  'openWebviewCommand',
+		  () => new WebviewViewProvider(context.extensionUri, context)
+		)
+	  );
+
 }
 
 // This method is called when your extension is deactivated
@@ -38,15 +45,16 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'superdocs.superdocsView';
 	private _view?: vscode.WebviewView;
 	private terminalTool?: TerminalTool;
+	private changesQueue: Map<String, String>[];
 
 	private intervalPrediction?: NodeJS.Timer;
-	private previousWorkspaceFiles: any;
 
 	constructor(
 		private readonly _extensionUri: vscode.Uri,
 		private readonly _context: vscode.ExtensionContext
 	) {
 		this.terminalTool = new TerminalTool();
+		this.changesQueue = [];
 	 }
 
 	private async getWorkspaceDocuments() {
@@ -113,37 +121,45 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						}
 					});
 
-					this.intervalPrediction = setInterval(async () => {
-						let currentWorkspaceFiles = await this.getWorkspaceDocuments();
-						let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
-						let changes = "";
-						
-						if(this.previousWorkspaceFiles){
-							// Find new documents that have been opened;
-							let previousWorkspaceMap = this.documentListToMap(this.previousWorkspaceFiles);
-							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
-								if(!previousWorkspaceMap.has(currentFilename)) {
-									changes += `Opened file: ${currentFilename}\n`;
-								} else {
-									let diff = difflib.unifiedDiff(previousWorkspaceMap.get(currentFilename).split("\n"), currentCode.split("\n"), {
-	
-									}).join("\n");
-									changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
-								}
-							}
-						}
+					// this.intervalPrediction = setInterval(async () => {
+					// 	console.log("Running interval prediction");
+					// 	let currentWorkspaceFiles = await this.getWorkspaceDocuments();
+					// 	let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
+					// 	this.changesQueue.push(currentWorkspaceMap);
 
-						if(changes.length === 0){
-							changes = "No changes detected";
-						}
+					// 	let changes = "";
 						
-						webviewView.webview.postMessage({
-							type: "recentChanges",
-							content: changes
-						});
+					// 	let previousChangesToAnalyze;
+					// 	if(this.changesQueue.length > 5){
+					// 		previousChangesToAnalyze = this.changesQueue.shift(); // Will also pop that last element of the array
+					// 	} else if (this.changesQueue.length > 1) {
+					// 		previousChangesToAnalyze = this.changesQueue[0];
+					// 	}
+					// 	if(previousChangesToAnalyze){
+					// 		// Find new documents that have been opened;
+					// 		for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
+					// 			if(!previousChangesToAnalyze.has(currentFilename)) {
+					// 				changes += `Opened file: ${currentFilename}\n`;
+					// 			} else {
+					// 				let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
+					// 				}).join("\n");
+					// 				changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
+					// 			}
+					// 		}
+					// 	}
 
-						this.previousWorkspaceFiles = currentWorkspaceFiles;
-					}, 10000);
+					// 	if(changes.length === 0){
+					// 		changes = "No changes detected";
+					// 	}
+						
+					// 	console.log("Sending recent changes: ", changes)
+
+					// 	webviewView.webview.postMessage({
+					// 		type: "recentChanges",
+					// 		content: changes
+					// 	});
+
+					// }, 5000);
 					break;
 			}
 			if(data.type === "replaceSnippet"){

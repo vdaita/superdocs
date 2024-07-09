@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { User, createClient } from '@supabase/supabase-js';
@@ -74,6 +74,12 @@ export default function App(){
 
   let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
 
+  let [predictCurrentObjective, setPredictCurrentObjective] = useState(false);
+  let predictCurrentObjectiveRef = useRef<boolean>(false);
+  predictCurrentObjectiveRef.current = predictCurrentObjective;
+
+  let [candidateQueries, setCandidateQueries] = useState([]);
+
   let [loading, setLoading] = useState<boolean>(false);
   let [abortController, setAbortController] = useState<AbortController | undefined>();
   const posthog = usePostHog();
@@ -120,8 +126,8 @@ export default function App(){
         });
       } else if (message.type == "processRequest") {
         processRequestWithSnippets(message.content.snippets, message.content.query);
-      } else if (message.type == "predictObjective") {
-        
+      } else if (message.type == "recentChanges") {
+        processRecentChangesRequest(message.content);
       }
 
       supabase.auth.onAuthStateChange((event, session) => {
@@ -161,6 +167,29 @@ export default function App(){
       notifications.show({
         message: "No request to cancel"
       })
+    }
+  }
+
+  let processRecentChangesRequest = async (changes: string) => {
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/recommend_prompts" : "https://superdocs-sand.vercel.app/api/recommend_prompts/";
+    try {
+      console.log("Sending recent changes: ", changes);
+      let response = await fetch(url, {
+        body: JSON.stringify({
+          changes: changes
+        }),
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      if(response.ok) {
+        let json = await response.json();
+        setCandidateQueries(json['candidateQueries']);
+      }
+    } catch (e) {
+      console.log("Error when processing recent changes request");
+      console.error(e);
     }
   }
 
@@ -221,16 +250,8 @@ export default function App(){
               }
               let parsedChunk = JSON.parse(chunk);
               console.log("Received chunk of type: ", parsedChunk["type"]);
-              if(parsedChunk["type"] === "plans"){
+              if(parsedChunk["type"] === "plan") {
                 setPlans(parsedChunk["plans"]);
-              } else if (parsedChunk["type"] === "change") { // this is a change
-                console.log("Processing change: ", parsedChunk);
-                setPlans((plans) => {
-                  let newPlans = structuredClone(plans);
-                  newPlans[0]["editInstructions"][parsedChunk["index"]] = parsedChunk["instruction"];
-                  console.log("New plans given an instruction: ", newPlans);
-                  return newPlans;
-                });
               }
             });
           } catch (e) {
@@ -275,9 +296,10 @@ export default function App(){
   }
 
   let deleteSnippet = (index: number) => {
+    console.log("Trying to delete snippet at index: ", index);
     setSnippets((prevSnippets: Snippet[]) => {
       let newList = prevSnippets.splice(index, 1);
-      console.log("Spliced list: ", newList);
+      console.log("Delete snippet - spliced list: ", newList);
       return newList;
     });
   }
@@ -383,11 +405,19 @@ export default function App(){
     <Stack p={2} mt={6}>
       <Textarea onChange={(e) => setQuery(e.target.value)} value={query} placeholder={"Query"}>
       </Textarea>
+
+      {candidateQueries.map((item, index) => (
+        <Card shadow="sm" padding="lg" radius="md" withBorder onClick={() => setQuery(item)}>
+          <Text>{item}</Text>
+        </Card>
+      ))}
+
       {loading && <Box>
         <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews. Will be fixed.</Text>
         <Loader/>
       </Box>}
-
+      
+      {(!addEverythingFromWorkspace && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Button</Button> }
       {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
@@ -405,6 +435,7 @@ export default function App(){
 
       {addEverythingFromWorkspace && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
+      <Checkbox label="Check your changes to predict your current objective" checked={predictCurrentObjective} onChange={(e) => setPredictCurrentObjective(e.currentTarget.checked)}></Checkbox>
       <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
       <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
       {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}

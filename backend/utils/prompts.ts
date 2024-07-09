@@ -105,7 +105,7 @@ Each edit instruction must be detailed.
 Output your response in the following JSON format:
 {
     message: "A string that describes a message that you want to send to the user describing your changes.",
-    editInstructions: ["First instruction", "Second instruction", "Third instruction"],
+    editInstructions: ["A single edit instruction that can be followed."],
 }`
 
 export const PLAN_PROMPT_BULLET_POINTS = `You are an intelligent coding assistant. 

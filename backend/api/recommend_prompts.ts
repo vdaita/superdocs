@@ -142,100 +142,35 @@ const POST = async (req: VercelRequest) => {
         const res = new Response('Departed', CORS_HEADERS);
         return res;
     }
+
     // console.log("Request body: ", req.body);
     const reqJson = await req.json();
-    let snippets: Snippet[] = reqJson["snippets"];
-    let filepaths: string[] = [];
-    snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
 
-    let textEncoder = new TextEncoder();
-    
-    let unifiedSnippets: Snippet[] = [];
-    let files = new Map();
-    filepaths.forEach((filepath) => {
-        let codeChunks: string[] = [];
-        let lang: string = "";            
-        snippets.forEach((snippet) => {
-            if(snippet.filepath === filepath) {
-                codeChunks.push(snippet.code);
-                lang = snippet.language;
-            }
-        });
-        unifiedSnippets.push({
-            filepath: filepath,
-            code: codeChunks.join("\n----\n"),
-            language: lang
-        });
-        files.set(filepath, codeChunks.join("\n----\n"));
-    });
-
-    let fileContextStr = "";
-    unifiedSnippets.forEach((snippet) => {
-        fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
-    });
-
-    try {
-        // console.log("Tries validating: ", reqJson);
-
-        const user = await jwtVerify(
-            reqJson["session"]["access_token"],
-            new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
-        );
-        // console.log("User verified: ", user);
-        // Either user is verified or this fails.
-    } catch (e) {
-        console.error("Token validation failed: ", e);
-        throw "Token validation failed."; // Error out completely
-    }
-
-    const stream = new ReadableStream({
-        async start(controller) {
-            let response = await openai.chat.completions.create({
-                messages: [{
-                    role: "system",
-                    content: AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
-                }],
-                model: "gpt-4o",
-                stream: true
-            });
-
-            let editInstruction: EditInstruction = {
-                instruction: "",
-                changesCompleted: false,
-            }
-
-            for await(const chunk of response){
-                editInstruction.instruction += chunk.choices[0]?.delta?.content || "";
-                let encodedPlan = textEncoder.encode(JSON.stringify({
-                    type: "plan",
-                    index: 0,
-                    plans: [editInstruction]
-                }) + "<SDSEP>");
-                controller.enqueue(encodedPlan);
-            }
-
-            let fixedSearchReplaces = getFixedSearchReplace(files, editInstruction.instruction);
-            fixedSearchReplaces.forEach((fsr) => {
-                if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
-                    newInstruction.changes?.push({
-                        filepath: fsr.filepath,
-                        searchBlock: fsr.searchBlock,
-                        replaceBlock: fsr.replaceBlock
-                    });
+    let message = await groq.chat.completions.create({
+        model: "llama3-8b-8192",
+        message: [{
+            "role": "system",
+            "content": `Based on the most recent changes the user has been making to their file, please try to predict the current objective they are trying to complete. Format your output in JSON: 
+            {
+                "possibleQueries": {
+                    "Query 1",
+                    "Query 2"
                 }
-            });
-            editInstruction.changesCompleted = true;
-
-            let encodedPlan = JSON.stringify({
-                type: "plan", 
-                index: 0,
-                plans: [editInstruction]
-            }) + "<SDSEP>";
-            controller.enqueue(encodedPlan);
+            }`
+        }, {
+            "role": "user",
+            "content": `Most recent changes: ${reqJson['changes']}`
+        }],
+        response_format: {
+            type: "json_object"
         }
-    })
+    });
+    message = message.choices[0].message.content;
+    message = JSON.parse(message);
 
-    return new Response(stream, CORS_HEADERS);
+    return new Response({
+        possibleQueries: message["possibleQueries"]
+    }, CORS_HEADERS);
 }
 
 export default POST;
