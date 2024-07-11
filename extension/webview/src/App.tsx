@@ -183,7 +183,7 @@ export default function App(){
 
   let processRecentChangesRequest = async (changes: string, workspaceFiles: string) => {
     let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/recommend_prompts" : "https://superdocs-sand.vercel.app/api/recommend_prompts/";
-  
+    console.log("Running processRecentChangesRequest function");
     try {
       if (changes.length < 10) {
         console.log("Skipping - less that 30 characters detected.");
@@ -202,8 +202,12 @@ export default function App(){
         }
       });
       if(response.ok) {
+        console.log("processRecentChangesRequest: got OK response from server");
         let json = await response.json();
-        setCandidateQueries(json['candidateQueries']);
+        console.log("Recent changes request json: ", json);
+        setCandidateQueries(json['possibleQueries']);
+      } else {
+        console.error("Error with recent changes request: ", response);
       }
     } catch (e) {
       console.log("Error when processing recent changes request");

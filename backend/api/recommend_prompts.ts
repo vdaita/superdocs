@@ -150,7 +150,7 @@ const POST = async (req: VercelRequest) => {
         model: "llama3-8b-8192",
         messages: [{
             "role": "system",
-            "content": `Based on the most recent changes the user has been making to their file, please try to predict the current objective they are trying to complete. Format your output in JSON: 
+            "content": `Based on the most recent changes the user has been making to their file, please try to describe what sorts of edits the user is trying to make to their file, that can be used for autocomplete or to gather more info. Format your output in JSON: 
             {
                 "possibleQueries": [
                     "Query 1",
@@ -168,9 +168,11 @@ const POST = async (req: VercelRequest) => {
     message = message.choices[0].message.content;
     message = JSON.parse(message);
 
-    return new Response({
+    console.log("Received message predictions: ", message);
+
+    return new Response(JSON.stringify({
         possibleQueries: message["possibleQueries"]
-    }, CORS_HEADERS);
+    }), CORS_HEADERS);
 }
 
 export default POST;

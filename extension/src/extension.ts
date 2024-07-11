@@ -125,7 +125,6 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						console.log("Running interval prediction");
 						let currentWorkspaceFiles = await this.getWorkspaceDocuments();
 						let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
-						this.changesQueue.push(currentWorkspaceMap);
 
 						let changes = "";
 						let workspaceFiles = "";
@@ -136,6 +135,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						} else if (this.changesQueue.length > 1) {
 							previousChangesToAnalyze = this.changesQueue[0];
 						}
+						this.changesQueue.push(currentWorkspaceMap);
+						console.log("Length of changesQueue: ", this.changesQueue);
 						if(previousChangesToAnalyze){
 							// Find new documents that have been opened;
 							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
