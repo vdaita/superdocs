@@ -121,45 +121,46 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						}
 					});
 
-					// this.intervalPrediction = setInterval(async () => {
-					// 	console.log("Running interval prediction");
-					// 	let currentWorkspaceFiles = await this.getWorkspaceDocuments();
-					// 	let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
-					// 	this.changesQueue.push(currentWorkspaceMap);
+					this.intervalPrediction = setInterval(async () => {
+						console.log("Running interval prediction");
+						let currentWorkspaceFiles = await this.getWorkspaceDocuments();
+						let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
+						this.changesQueue.push(currentWorkspaceMap);
 
-					// 	let changes = "";
+						let changes = "";
+						let workspaceFiles = "";
+
+						let previousChangesToAnalyze;
+						if(this.changesQueue.length > 5){
+							previousChangesToAnalyze = this.changesQueue.shift(); // Will also pop that last element of the array
+						} else if (this.changesQueue.length > 1) {
+							previousChangesToAnalyze = this.changesQueue[0];
+						}
+						if(previousChangesToAnalyze){
+							// Find new documents that have been opened;
+							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
+								if(!previousChangesToAnalyze.has(currentFilename)) {
+									changes += `Opened file: ${currentFilename}\n`;
+								} else if (currentCode !== previousChangesToAnalyze.get(currentFilename)) {
+									let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
+									}).join("\n");
+									changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
+								}
+								workspaceFiles += `File: ${currentFilename}\nCode:\n${currentCode}\n`
+							}
+						}
 						
-					// 	let previousChangesToAnalyze;
-					// 	if(this.changesQueue.length > 5){
-					// 		previousChangesToAnalyze = this.changesQueue.shift(); // Will also pop that last element of the array
-					// 	} else if (this.changesQueue.length > 1) {
-					// 		previousChangesToAnalyze = this.changesQueue[0];
-					// 	}
-					// 	if(previousChangesToAnalyze){
-					// 		// Find new documents that have been opened;
-					// 		for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
-					// 			if(!previousChangesToAnalyze.has(currentFilename)) {
-					// 				changes += `Opened file: ${currentFilename}\n`;
-					// 			} else {
-					// 				let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
-					// 				}).join("\n");
-					// 				changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
-					// 			}
-					// 		}
-					// 	}
+						console.log("Sending recent changes: ", changes)
 
-					// 	if(changes.length === 0){
-					// 		changes = "No changes detected";
-					// 	}
-						
-					// 	console.log("Sending recent changes: ", changes)
+						webviewView.webview.postMessage({
+							type: "recentChanges",
+							content: {
+								changes: changes,
+								workspaceFiles: workspaceFiles
+							}
+						});
 
-					// 	webviewView.webview.postMessage({
-					// 		type: "recentChanges",
-					// 		content: changes
-					// 	});
-
-					// }, 5000);
+					}, 5000);
 					break;
 			}
 			if(data.type === "replaceSnippet"){

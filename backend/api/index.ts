@@ -40,12 +40,6 @@ const geminiFlash = googleGenAI.getGenerativeModel({model: 'gemini-1.5-flash-lat
     "responseMimeType": "application/json"
 }});
 
-type Plan = {
-    message: string
-    editInstructions: EditInstruction[]
-    // newFiles: NewFile[]
-}
-
 type EditInstruction = {
     instruction: string
     // filepath: string
@@ -132,7 +126,7 @@ function parseBulletPointPlan(input: string) {
 }
 
 const POST = async (req: VercelRequest) => {
-    console.log("Full request: ", req);
+    // console.log("Full request: ", req);
 
     const url = new URL(req.url!);
     console.log("Received request to: ", req.url);
@@ -190,50 +184,61 @@ const POST = async (req: VercelRequest) => {
 
     const stream = new ReadableStream({
         async start(controller) {
+            let textEncoder = new TextEncoder();
+            
             let response = await openai.chat.completions.create({
                 messages: [{
                     role: "system",
                     content: AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
+                }, {
+                    role: "user",
+                    content: `# File context:\n${fileContextStr}\n# Instruction\n${reqJson['request']}`
                 }],
                 model: "gpt-4o",
                 stream: true
             });
 
-            let editInstruction: EditInstruction = {
-                instruction: "",
-                changesCompleted: false,
-            }
+            let responseText = "";
 
             for await(const chunk of response){
-                editInstruction.instruction += chunk.choices[0]?.delta?.content || "";
-                let encodedPlan = textEncoder.encode(JSON.stringify({
+                responseText += chunk.choices[0]?.delta?.content || "";
+                // console.log("Added and sent chunk");
+                let encodedPlan = JSON.stringify({
                     type: "plan",
                     index: 0,
-                    plans: [editInstruction]
-                }) + "<SDSEP>");
-                controller.enqueue(encodedPlan);
+                    plan: {
+                        message: responseText,
+                        changes: []
+                    }
+                }) + "<SDSEP>";
+                controller.enqueue(textEncoder.encode(encodedPlan));
             }
 
-            let fixedSearchReplaces = getFixedSearchReplace(files, editInstruction.instruction);
+            let fixedSearchReplaces = getFixedSearchReplace(files, responseText);
+            let changes: Change[] = [];
             fixedSearchReplaces.forEach((fsr) => {
                 if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
-                    newInstruction.changes?.push({
+                    changes?.push({
                         filepath: fsr.filepath,
                         searchBlock: fsr.searchBlock,
                         replaceBlock: fsr.replaceBlock
                     });
                 }
             });
-            editInstruction.changesCompleted = true;
 
+            console.log("Sent final search-replacements");
             let encodedPlan = JSON.stringify({
                 type: "plan", 
                 index: 0,
-                plans: [editInstruction]
+                plan: {
+                    message: responseText,
+                    changes: changes
+                }
             }) + "<SDSEP>";
-            controller.enqueue(encodedPlan);
+            controller.enqueue(textEncoder.encode(encodedPlan));
+            controller.close();
         }
-    })
+    });
 
     return new Response(stream, CORS_HEADERS);
 }

@@ -17,7 +17,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // @ts-ignore
 import { Transform, TransformCallback } from 'stream'; 
 
-console.log("Hello via Node!");
+// console.log("Hello via Node!");
 
 export const config = {
     runtime: 'edge'
@@ -132,7 +132,7 @@ function parseBulletPointPlan(input: string) {
 }
 
 const POST = async (req: VercelRequest) => {
-    console.log("Full request: ", req);
+    // console.log("Full request: ", req);
 
     const url = new URL(req.url!);
     console.log("Received request to: ", req.url);
@@ -148,18 +148,18 @@ const POST = async (req: VercelRequest) => {
 
     let message = await groq.chat.completions.create({
         model: "llama3-8b-8192",
-        message: [{
+        messages: [{
             "role": "system",
             "content": `Based on the most recent changes the user has been making to their file, please try to predict the current objective they are trying to complete. Format your output in JSON: 
             {
-                "possibleQueries": {
+                "possibleQueries": [
                     "Query 1",
                     "Query 2"
-                }
+                ]
             }`
         }, {
             "role": "user",
-            "content": `Most recent changes: ${reqJson['changes']}`
+            "content": `File contents:\n${reqJson['workspaceFiles']}\nMost recent changes: ${reqJson['changes']}`
         }],
         response_format: {
             type: "json_object"
