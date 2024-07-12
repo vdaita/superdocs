@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { User, createClient } from '@supabase/supabase-js';
@@ -30,8 +30,7 @@ type Generation = {
 
 type Plan = {
   message: string
-  editInstructions: EditInstruction[]
-  newFiles: NewFile[]
+  changes: Change[] 
 }
 
 type EditInstruction = {
@@ -73,6 +72,15 @@ export default function App(){
   let [otpCode, setOtpCode] = useState<string>("");
 
   let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
+
+  let [predictCurrentObjective, setPredictCurrentObjective] = useState(false);
+  let predictCurrentObjectiveRef = useRef<boolean>(false);
+  predictCurrentObjectiveRef.current = predictCurrentObjective;
+  let lastPredictionRequestSent = useRef<number>(0);
+
+  let posthogIdentifiedUserRef = useRef<boolean>(false);
+
+  let [candidateQueries, setCandidateQueries] = useState([]);
 
   let [loading, setLoading] = useState<boolean>(false);
   let [abortController, setAbortController] = useState<AbortController | undefined>();
@@ -120,6 +128,12 @@ export default function App(){
         });
       } else if (message.type == "processRequest") {
         processRequestWithSnippets(message.content.snippets, message.content.query);
+      } else if (message.type == "recentChanges") {
+        console.log("Will send predict current objective request? : ", predictCurrentObjectiveRef.current, " last prediction sent: ", lastPredictionRequestSent.current, " current time: ", Date.now());
+        if(predictCurrentObjectiveRef.current && (Date.now() - 5000) > lastPredictionRequestSent.current){
+          lastPredictionRequestSent.current = Date.now();
+          processRecentChangesRequest(message.content["changes"], message.content["workspaceFiles"]);
+        }
       }
 
       supabase.auth.onAuthStateChange((event, session) => {
@@ -133,13 +147,18 @@ export default function App(){
   }, []);
 
   useEffect(() => {
-    if (user) {
-      console.log("PostHog identified user.")
-      posthog?.identify(
-        user.id, {
-          email: user.email
-        }
-      );
+    if(!posthogIdentifiedUserRef.current){
+      if (user) {
+        console.log("PostHog identified user.")
+        posthog?.identify(
+          user.id, {
+            email: user.email
+          }
+        );
+        posthogIdentifiedUserRef.current = true;
+      }
+    } else {
+      console.log("Skipping posthog identification")
     }
   }, [posthog, user]);
 
@@ -159,6 +178,40 @@ export default function App(){
       notifications.show({
         message: "No request to cancel"
       })
+    }
+  }
+
+  let processRecentChangesRequest = async (changes: string, workspaceFiles: string) => {
+    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/recommend_prompts" : "https://superdocs-sand.vercel.app/api/recommend_prompts/";
+    console.log("Running processRecentChangesRequest function");
+    try {
+      if (changes.length < 10) {
+        console.log("Skipping - less that 30 characters detected.");
+        return;
+      }
+      
+      console.log("Sending recent changes: ", changes);
+      let response = await fetch(url, {
+        body: JSON.stringify({
+          changes: changes,
+          workspaceFiles: workspaceFiles
+        }),
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      if(response.ok) {
+        console.log("processRecentChangesRequest: got OK response from server");
+        let json = await response.json();
+        console.log("Recent changes request json: ", json);
+        setCandidateQueries(json['possibleQueries']);
+      } else {
+        console.error("Error with recent changes request: ", response);
+      }
+    } catch (e) {
+      console.log("Error when processing recent changes request");
+      console.error(e);
     }
   }
 
@@ -219,16 +272,8 @@ export default function App(){
               }
               let parsedChunk = JSON.parse(chunk);
               console.log("Received chunk of type: ", parsedChunk["type"]);
-              if(parsedChunk["type"] === "plans"){
-                setPlans(parsedChunk["plans"]);
-              } else if (parsedChunk["type"] === "change") { // this is a change
-                console.log("Processing change: ", parsedChunk);
-                setPlans((plans) => {
-                  let newPlans = structuredClone(plans);
-                  newPlans[0]["editInstructions"][parsedChunk["index"]] = parsedChunk["instruction"];
-                  console.log("New plans given an instruction: ", newPlans);
-                  return newPlans;
-                });
+              if(parsedChunk["type"] === "plan") {
+                setPlans([parsedChunk["plan"]]);
               }
             });
           } catch (e) {
@@ -273,9 +318,10 @@ export default function App(){
   }
 
   let deleteSnippet = (index: number) => {
+    console.log("Trying to delete snippet at index: ", index);
     setSnippets((prevSnippets: Snippet[]) => {
       let newList = prevSnippets.splice(index, 1);
-      console.log("Spliced list: ", newList);
+      console.log("Delete snippet - spliced list: ", newList);
       return newList;
     });
   }
@@ -377,15 +423,45 @@ export default function App(){
     }
   }
 
+  let setPredictAndAllWorkspace = (newValue: boolean, checkbox: string) => { // If predict is true, then add all open tabs is true. If add all open tabs is false, then predict is true
+      if(checkbox === 'predict' && newValue){
+        setAddEverythingFromWorkspace(true);
+        setPredictCurrentObjective(true);
+        return;
+      }
+
+      if(checkbox == 'addAll' && !newValue){
+        setAddEverythingFromWorkspace(false);
+        setPredictCurrentObjective(false);
+        return;
+      }
+
+      if(checkbox == 'addAll'){
+        setAddEverythingFromWorkspace(newValue);
+      }
+
+      if(checkbox == 'predict') {
+        setPredictCurrentObjective(newValue);
+      }
+  }
+
   return (
     <Stack p={2} mt={6}>
-      <Textarea onChange={(e) => setQuery(e.target.value)} value={query} placeholder={"Query"}>
+      <Textarea onChange={(e) => setQuery(e.target.value)} size="lg" value={query} placeholder={"Query"}>
       </Textarea>
+
+      {candidateQueries.map((item, index) => (
+        <Card shadow="sm" padding="xs" radius="md" withBorder onClick={() => setQuery(item)}>
+          <Text size="sm">{item}</Text>
+        </Card>
+      ))}
+
       {loading && <Box>
         <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews. Will be fixed.</Text>
         <Loader/>
       </Box>}
-
+      
+      {(!addEverythingFromWorkspace && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
       {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
@@ -403,7 +479,8 @@ export default function App(){
 
       {addEverythingFromWorkspace && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
-      <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setAddEverythingFromWorkspace(e.currentTarget.checked)}></Checkbox>
+      <Checkbox label="Check your changes to predict your current objective" checked={predictCurrentObjective} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'predict')}></Checkbox>
+      <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'addAll')}></Checkbox>
       <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
       {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
 
@@ -420,49 +497,37 @@ export default function App(){
           ))}
         </Tabs.List>
         {plans.map((item, index) => (
-          <Tabs.Panel value={index.toString()}>
-            <Badge>Message</Badge>
-            <EnhancedMarkdown message={item.message} height={40}></EnhancedMarkdown>
-            {item.editInstructions.length > 0 && <Box>
-              <Badge>Edits</Badge>
-              {item.editInstructions.map((instructionItem, instructionIndex) => (
-                <Box>
-                  {instructionItem.instruction}
-                  {instructionItem.changesCompleted && <Box>
-                      <details>
-                        <summary>View full text</summary>
-                        <p>{instructionItem.changeUpdate ? instructionItem.changeUpdate : "Not available."}</p>
-                      </details>
-
-                      {instructionItem.changes?.map((changeItem, changeIndex) => (
-                        <Card>
-                          <Text style={{fontWeight: "bold"}}>{changeItem.filepath}</Text>
-                          <Box m="sm" bg="red">
-                            Replace:
-                            <CopyBlock
-                              text={changeItem.searchBlock}
-                              language={getMatchingLanguageFromFilepath(changeItem.filepath)}
-                              wrapLongLines
-                            />
-                          </Box>
-                          <Box m="sm" bg="green">
-                            with: 
-                            <CopyBlock
-                              text={changeItem.replaceBlock}
-                              language={getMatchingLanguageFromFilepath(changeItem.filepath)}
-                              wrapLongLines
-                            />
-                          </Box>
-
-                          <Button onClick={() => sendChange(changeItem.filepath, changeItem.searchBlock, changeItem.replaceBlock)}>Accept change</Button>
-                        </Card>
-                      ))}
-                    </Box>}
-                  {!instructionItem.changesCompleted && <Text>{instructionItem.changeUpdate}</Text>}
-                </Box>
-              ))}
-            </Box>}
-          </Tabs.Panel>
+          <Box>
+            {/* {JSON.stringify(item)} */}
+            {item['message'] && <EnhancedMarkdown message={item['message']} height={60}/>}
+            {item["changes"] && <>
+            {
+              item["changes"].map((editItem, editIndex) => (
+                <Card>
+                  <Text style={{fontWeight: "bold"}}>{editItem.filepath}</Text>
+                  <Box m="sm" bg="red">
+                    Replace:
+                    <CopyBlock
+                      text={editItem.searchBlock}
+                      language={getMatchingLanguageFromFilepath(editItem.filepath)}
+                      wrapLongLines
+                    />
+                  </Box>
+                  <Box m="sm" bg="green">
+                    with: 
+                    <CopyBlock
+                      text={editItem.replaceBlock}
+                      language={getMatchingLanguageFromFilepath(editItem.filepath)}
+                      wrapLongLines
+                    />
+                  </Box>
+  
+                  <Button onClick={() => sendChange(editItem.filepath, editItem.searchBlock, editItem.replaceBlock)}>Accept change</Button>
+                </Card>
+              ))
+            }
+            </>}
+          </Box>
         ))}
       </Tabs>
     </Stack>

@@ -67,9 +67,9 @@ function parseDiff(diffString: string): SearchReplaceChange[] {
 
         for (const line of text.split("\n")) {
             if (line.startsWith("-")) {
-                searchBlock += " " + line.slice(1) + "\n";
+                searchBlock += line.slice(1) + "\n";
             } else if (line.startsWith("+")) {
-                replaceBlock += " " + line.slice(1) + "\n";
+                replaceBlock += line.slice(1) + "\n";
             } else {
                 searchBlock += line.slice(1) + "\n";
                 replaceBlock += line.slice(1) + "\n";

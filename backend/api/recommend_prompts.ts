@@ -17,7 +17,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 // @ts-ignore
 import { Transform, TransformCallback } from 'stream'; 
 
-console.log("Hello via Node!");
+// console.log("Hello via Node!");
 
 export const config = {
     runtime: 'edge'
@@ -39,6 +39,12 @@ const googleGenAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const geminiFlash = googleGenAI.getGenerativeModel({model: 'gemini-1.5-flash-latest', generationConfig: {
     "responseMimeType": "application/json"
 }});
+
+type Plan = {
+    message: string
+    editInstructions: EditInstruction[]
+    // newFiles: NewFile[]
+}
 
 type EditInstruction = {
     instruction: string
@@ -136,111 +142,37 @@ const POST = async (req: VercelRequest) => {
         const res = new Response('Departed', CORS_HEADERS);
         return res;
     }
+
     // console.log("Request body: ", req.body);
     const reqJson = await req.json();
-    let snippets: Snippet[] = reqJson["snippets"];
-    let filepaths: string[] = [];
-    snippets.forEach((snippet) => { filepaths.push(snippet.filepath); });
 
-    let textEncoder = new TextEncoder();
-    
-    let unifiedSnippets: Snippet[] = [];
-    let files = new Map();
-    filepaths.forEach((filepath) => {
-        let codeChunks: string[] = [];
-        let lang: string = "";            
-        snippets.forEach((snippet) => {
-            if(snippet.filepath === filepath) {
-                codeChunks.push(snippet.code);
-                lang = snippet.language;
-            }
-        });
-        unifiedSnippets.push({
-            filepath: filepath,
-            code: codeChunks.join("\n----\n"),
-            language: lang
-        });
-        files.set(filepath, codeChunks.join("\n----\n"));
-    });
-
-    let fileContextStr = "";
-    unifiedSnippets.forEach((snippet) => {
-        fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
-    });
-
-    try {
-        // console.log("Tries validating: ", reqJson);
-
-        const user = await jwtVerify(
-            reqJson["session"]["access_token"],
-            new TextEncoder().encode(process.env.SUPABASE_JWT_SECRET)
-        );
-        // console.log("User verified: ", user);
-        // Either user is verified or this fails.
-    } catch (e) {
-        console.error("Token validation failed: ", e);
-        throw "Token validation failed."; // Error out completely
-    }
-
-    const stream = new ReadableStream({
-        async start(controller) {
-            let textEncoder = new TextEncoder();
-            
-            let response = await openai.chat.completions.create({
-                messages: [{
-                    role: "system",
-                    content: AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
-                }, {
-                    role: "user",
-                    content: `# File context:\n${fileContextStr}\n# Instruction\n${reqJson['request']}`
-                }],
-                model: "gpt-4o",
-                stream: true
-            });
-
-            let responseText = "";
-
-            for await(const chunk of response){
-                responseText += chunk.choices[0]?.delta?.content || "";
-                // console.log("Added and sent chunk");
-                let encodedPlan = JSON.stringify({
-                    type: "plan",
-                    index: 0,
-                    plan: {
-                        message: responseText,
-                        changes: []
-                    }
-                }) + "<SDSEP>";
-                controller.enqueue(textEncoder.encode(encodedPlan));
-            }
-
-            let fixedSearchReplaces = getFixedSearchReplace(files, responseText);
-            let changes: Change[] = [];
-            fixedSearchReplaces.forEach((fsr) => {
-                if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
-                    changes?.push({
-                        filepath: fsr.filepath,
-                        searchBlock: fsr.searchBlock,
-                        replaceBlock: fsr.replaceBlock
-                    });
-                }
-            });
-
-            console.log("Sent final search-replacements");
-            let encodedPlan = JSON.stringify({
-                type: "plan", 
-                index: 0,
-                plan: {
-                    message: responseText,
-                    changes: changes
-                }
-            }) + "<SDSEP>";
-            controller.enqueue(textEncoder.encode(encodedPlan));
-            controller.close();
+    let message = await groq.chat.completions.create({
+        model: "llama3-8b-8192",
+        messages: [{
+            "role": "system",
+            "content": `Based on the most recent changes the user has been making to their file, please try to describe what sorts of edits the user is trying to make to their file, that can be used for autocomplete or to gather more info. Format your output in JSON: 
+            {
+                "possibleQueries": [
+                    "Query 1",
+                    "Query 2"
+                ]
+            }`
+        }, {
+            "role": "user",
+            "content": `File contents:\n${reqJson['workspaceFiles']}\nMost recent changes: ${reqJson['changes']}`
+        }],
+        response_format: {
+            type: "json_object"
         }
     });
+    message = message.choices[0].message.content;
+    message = JSON.parse(message);
 
-    return new Response(stream, CORS_HEADERS);
+    console.log("Received message predictions: ", message);
+
+    return new Response(JSON.stringify({
+        possibleQueries: message["possibleQueries"]
+    }), CORS_HEADERS);
 }
 
 export default POST;
