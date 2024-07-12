@@ -2,7 +2,7 @@
   "name": "superdocs",
   "displayName": "superdocs",
   "description": "Agentic programming assistant",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "engines": {
     "vscode": "^1.83.0"
   },

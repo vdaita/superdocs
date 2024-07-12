@@ -447,12 +447,12 @@ export default function App(){
 
   return (
     <Stack p={2} mt={6}>
-      <Textarea onChange={(e) => setQuery(e.target.value)} value={query} placeholder={"Query"}>
+      <Textarea onChange={(e) => setQuery(e.target.value)} size="lg" value={query} placeholder={"Query"}>
       </Textarea>
 
       {candidateQueries.map((item, index) => (
-        <Card shadow="sm" padding="lg" radius="md" withBorder onClick={() => setQuery(item)}>
-          <Text>{item}</Text>
+        <Card shadow="sm" padding="xs" radius="md" withBorder onClick={() => setQuery(item)}>
+          <Text size="sm">{item}</Text>
         </Card>
       ))}
 
@@ -461,7 +461,7 @@ export default function App(){
         <Loader/>
       </Box>}
       
-      {(!addEverythingFromWorkspace && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Button</Button> }
+      {(!addEverythingFromWorkspace && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
       {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
@@ -499,7 +499,7 @@ export default function App(){
         {plans.map((item, index) => (
           <Box>
             {/* {JSON.stringify(item)} */}
-            <p>{item ? item["message"] : ""}</p>
+            {item['message'] && <EnhancedMarkdown message={item['message']} height={60}/>}
             {item["changes"] && <>
             {
               item["changes"].map((editItem, editIndex) => (

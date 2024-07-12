@@ -137,15 +137,20 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						}
 						this.changesQueue.push(currentWorkspaceMap);
 						console.log("Length of changesQueue: ", this.changesQueue);
+						
+						let changedFiles = [];
+
 						if(previousChangesToAnalyze){
 							// Find new documents that have been opened;
 							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
 								if(!previousChangesToAnalyze.has(currentFilename)) {
 									changes += `Opened file: ${currentFilename}\n`;
+									changedFiles.push(currentFilename);
 								} else if (currentCode !== previousChangesToAnalyze.get(currentFilename)) {
 									let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
 									}).join("\n");
 									changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
+									changedFiles.push(currentFilename);
 								}
 								workspaceFiles += `File: ${currentFilename}\nCode:\n${currentCode}\n`
 							}
