@@ -6,7 +6,7 @@ At worst, Superdocs should give you the sort of response that GPT-4 gives you. A
 This project is heavily inspired by [Aider](https://aider.chat). 
 
 Things I've tried that haven't worked that well:
-- Paralellizing edit requests: this didn't work as well as expected because edit changes would be too close to each other, leading to different threads trying to edit the same part of code. Removed because of high cost.
+- Parallellizing edit requests: this didn't work as well as expected because edit changes would be too close to each other, leading to different threads trying to edit the same part of code. Removed because of high cost.
 - Guessing what changes are trying to be made using Llama models: the candidate generations aren't as great as I'd like them to be, but it's a cool concept and relatively cheap.
 
 I used Supabase for authentication with a backend, but it should be pretty easy to run Superdocs locally (albeit from the extension host). Raise an issue or send me an email if you'd like to be invited to the application.
