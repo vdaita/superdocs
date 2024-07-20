@@ -1,16 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
-import { User, createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { usePostHog } from 'posthog-js/react'
 import { CopyBlock } from 'react-code-blocks';
+import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT } from './lib/prompts';
+import { getFixedSearchReplace } from './lib/diff';
 
-const SUPABASE_URL = "https://qqlfwjdpxnpoopgibsbm.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxbGZ3amRweG5wb29wZ2lic2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDE0MDM0MjYsImV4cCI6MjAxNjk3OTQyNn0.FfCGI17DLv3Ejsno5--5XyfzCQtCLnoyeTf2cxGgOvc";
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 type Generation = {
   planCompleted: boolean;
@@ -61,15 +59,12 @@ type Snippet = {
 export default function App(){
   let [query, setQuery] = useState("");
   let [snippets, setSnippets] = useState<Snippet[]>([]);
+
+  let [openaiApiKey, setOpenAIApiKey] = useState("");
   
   let [plans, setPlans] = useState<Plan[]>([]);
 
   let [error, setError] = useState<string | undefined>();
-
-  let [user, setUser] = useState<User>();
-  let [email, setEmail] = useState<string>("");
-  let [sentCode, setSentCode] = useState<boolean>(false);
-  let [otpCode, setOtpCode] = useState<string>("");
 
   let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
 
@@ -96,6 +91,10 @@ export default function App(){
           posthog.opt_in_capturing();
         } else {
           posthog.opt_out_capturing();
+        }
+        
+        if(message.content.openaiApiKey) {
+          setOpenAIApiKey(message.content.openaiApiKey);
         }
       } else if (message.type === "snippet") {
         console.log("Received snippet: ", message)
@@ -135,33 +134,12 @@ export default function App(){
           processRecentChangesRequest(message.content["changes"], message.content["workspaceFiles"]);
         }
       }
-
-      supabase.auth.onAuthStateChange((event, session) => {
-        setUser(session!.user);
-      });
     });
     VSCodeMessage.postMessage({
       type: "startedWebview"
     });
     // TODO: listen for a change in the authentication state
   }, []);
-
-  useEffect(() => {
-    if(!posthogIdentifiedUserRef.current){
-      if (user) {
-        console.log("PostHog identified user.")
-        posthog?.identify(
-          user.id, {
-            email: user.email
-          }
-        );
-        posthogIdentifiedUserRef.current = true;
-      }
-    } else {
-      console.log("Skipping posthog identification")
-    }
-  }, [posthog, user]);
-
 
   // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
   let processRequest = async () => {
@@ -220,70 +198,94 @@ export default function App(){
     setError("");
 
     console.log("Current environment: ", process.env.NODE_ENV);
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/index" : "https://superdocs-sand.vercel.app/api/index/";
-
-    let authSession = await supabase.auth.getSession();
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
     }, 5000);
 
     try {
-      console.log("Sending session: ", authSession.data.session);
       console.log("Sending snippets and query: ", snippets, query);
 
-      const controller = new AbortController();
-      const signal = controller.signal;
-      setAbortController(controller);
-
-      let response = await fetch(url, {
-        body: JSON.stringify({
-          snippets: snippets,
-          request: query,
-          session: authSession.data.session
-        }),
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        signal: signal
+      const openai = new OpenAI({
+        apiKey: openaiApiKey,
+        dangerouslyAllowBrowser: true
       });
-      console.log("Received response from server: ", response);
-      if(response.ok){
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-  
-        let done = false;
-        while(!done){
-          const { value, done: doneReading } = await reader.read();
-          done = doneReading;
-          let chunkValue = decoder.decode(value);
-          console.log("Chunk value from backend: ", chunkValue);
-          if(chunkValue.length == 0){
-            console.log("Blank chunk - skipping.");
-            continue;
-          }
-          let splitChunks = chunkValue.split("<SDSEP>");
-          
-          try {
-            splitChunks.forEach((chunk) => {
-              if(chunk.length == 0){
-                return;
-              }
-              let parsedChunk = JSON.parse(chunk);
-              console.log("Received chunk of type: ", parsedChunk["type"]);
-              if(parsedChunk["type"] === "plan") {
-                setPlans([parsedChunk["plan"]]);
-              }
-            });
-          } catch (e) {
-            console.error("Processing error: moving on - ", e, splitChunks);
-          }
+
+      let fileContextStr = "";
+      snippets.forEach((snippet) => {
+          fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
+      });
+
+      let completion = await openai.chat.completions.create({
+        messages: [{
+          "role": "system",
+          "content": AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
+        }, {
+          "role": "user",
+          "content": `# File context:\n${fileContextStr}\n# Instruction\n${query}`
+        }],
+        model: "gpt-4o",
+        stream: true
+      });
+
+      let responseText = "";
+
+      for await(const chunk of completion) {
+        let chunkText = chunk.choices[0].delta.content;
+        if(chunkText) {
+          responseText += chunkText;
+          setPlans([
+            {
+              "message": responseText,
+              "changes": []
+            }
+          ]);
         }
-      } else {
-        console.error("Response error: ", response);
-        setError("There was an error on the server.");
       }
+
+      let fpSet = new Set<string>();
+      snippets.forEach((snippet) => { fpSet.add(snippet.filepath); });
+      let filepaths = Array.from(fpSet);
+
+      let unifiedSnippets: Snippet[] = [];
+      let files = new Map();
+      filepaths.forEach((filepath: string) => {
+          let codeChunks: string[] = [];
+          let lang: string = "";            
+          snippets.forEach((snippet) => {
+              if(snippet.filepath === filepath) {
+                  codeChunks.push(snippet.code);
+                  lang = snippet.language;
+              }
+          });
+          unifiedSnippets.push({
+              filepath: filepath,
+              code: codeChunks.join("\n----\n"),
+              language: lang
+          });
+          files.set(filepath, codeChunks.join("\n----\n"));
+      });
+
+
+      let fixedSearchReplaces = getFixedSearchReplace(files, responseText);
+      let changes: Change[] = [];
+      fixedSearchReplaces.forEach((fsr) => {
+          if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
+              changes?.push({
+                  filepath: fsr.filepath,
+                  searchBlock: fsr.searchBlock,
+                  replaceBlock: fsr.replaceBlock
+              });
+          }
+      });
+
+      setPlans([
+        {
+          "message": responseText,
+          "changes": changes
+        }
+      ]);
+
     } catch (e) {
       console.error("Error: ", e);
       setError("There was an error.");
@@ -299,12 +301,6 @@ export default function App(){
       }
     });
     return "text";
-  }
-
-  let addSnippetsFromVectors = (query: string) => { // TODO: start this when you have the vectorstore implemented
-    VSCodeMessage.postMessage(() => { // ask for a response to be sent back
-
-    });
   }
 
   let addWorkspaceAndProcessRequest = () => {
@@ -325,57 +321,7 @@ export default function App(){
       return newList;
     });
   }
-
-  let sendCode = async () => {
-    setLoading(true);
-
-    const { data, error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: {
-        shouldCreateUser: false
-      }
-    });
-
-    if(error){
-      console.error("sendCode: ", error);
-      notifications.show({
-        message: error.message,
-        title: "There was an error sending your code."
-      })
-    } else {
-      setSentCode(true);
-    }
-
-    setLoading(false);
-  }
-
-  let verifyCode = async () => {
-    setLoading(true);
-
-    const {
-      data: { session },
-      error
-    } = await supabase.auth.verifyOtp({
-      email: email,
-      token: otpCode,
-      type: "email"
-    });
-
-    if(session){
-      setUser(session?.user);
-    }
-
-    if(error){
-      console.error("verifyCode", error);
-      notifications.show({
-        message: error.message,
-        title: "There was an error verifying your code."
-      });
-    }
-
-    setLoading(false);
-  }
-
+  
   let sendChange = (filepath: string, search_block: string, replace_block: string) => {
     posthog?.capture("send_change");
 
@@ -387,40 +333,6 @@ export default function App(){
         filepath: filepath
       }
     })
-  }
-
-  let writeFile = (filepath: string, content: string) => {
-    VSCodeMessage.postMessage({
-      type: "writeFile",
-      content: {
-        filepath: filepath,
-        code: content
-      }
-    })
-  }
-
-  if(!user) {
-    if(sentCode){
-      return (
-        <Container m="sm">
-          <TextInput value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="OTP Code"></TextInput>
-          <Button disabled={loading} onClick={() => verifyCode()}>Confirm code</Button>
-          {loading && <Loader/>}
-          <br/>
-          <Button onClick={() => setSentCode(false)} variant={'outline'}>Go back</Button>
-        </Container>
-      )
-    } else {
-      return (
-        <Container m="sm">
-          <TextInput value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email"></TextInput>
-          <Button disabled={loading} onClick={() => sendCode()}>Send Code</Button>
-          <br/>
-          <p style={{fontSize: 12}}>60 second wait time required between emails.</p>
-          {loading && <Loader/>}
-        </Container>
-      )
-    }
   }
 
   let setPredictAndAllWorkspace = (newValue: boolean, checkbox: string) => { // If predict is true, then add all open tabs is true. If add all open tabs is false, then predict is true
@@ -445,6 +357,12 @@ export default function App(){
       }
   }
 
+  if(openaiApiKey.length <= 0){
+    return (
+      <Text m={4}>There needs to be an OpenAI key loaded in settings. You may want to refresh the window: Ctrl-Shift-P → Reload Window.</Text>
+    )
+  }
+
   return (
     <Stack p={2} mt={6}>
       <Textarea onChange={(e) => setQuery(e.target.value)} size="lg" value={query} placeholder={"Query"}>
@@ -457,7 +375,7 @@ export default function App(){
       ))}
 
       {loading && <Box>
-        <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews. Will be fixed.</Text>
+        <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews.</Text>
         <Loader/>
       </Box>}
       
@@ -479,7 +397,7 @@ export default function App(){
 
       {addEverythingFromWorkspace && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
-      <Checkbox label="Check your changes to predict your current objective" checked={predictCurrentObjective} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'predict')}></Checkbox>
+      {/* <Checkbox label="Check your changes to predict your current objective" checked={predictCurrentObjective} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'predict')}></Checkbox> */}
       <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'addAll')}></Checkbox>
       <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
       {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}

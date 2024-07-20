@@ -2,7 +2,7 @@
   "name": "superdocs",
   "displayName": "superdocs",
   "description": "Agentic programming assistant",
-  "version": "0.0.6",
+  "version": "0.0.7-byok",
   "engines": {
     "vscode": "^1.83.0"
   },
@@ -17,8 +17,12 @@
       "properties": {
         "superdocs.telemetryAllowed": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Allow telemetry"
+        },
+        "superdocs.openAiApiKey": {
+          "type": "string",
+          "description": "Your OpenAI API Key"
         }
       }
     },

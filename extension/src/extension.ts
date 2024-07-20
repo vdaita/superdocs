@@ -118,6 +118,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						type: "context",
 						content: {
 							telemetryAllowed: superdocsConfig.get("telemetryAllowed"),
+							openaiApiKey: superdocsConfig.get("openAiApiKey")
 						}
 					});
 

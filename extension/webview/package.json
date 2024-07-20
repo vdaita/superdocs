@@ -17,6 +17,8 @@
     "@uiw/react-md-editor": "^4.0.3",
     "axios": "^1.6.0",
     "diff": "^5.1.0",
+    "fastest-levenshtein": "^1.0.16",
+    "fuzzball": "^2.1.2",
     "openai": "^4.47.1",
     "posthog-js": "^1.131.4",
     "react": "^18.2.0",
