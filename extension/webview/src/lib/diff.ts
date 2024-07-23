@@ -15,7 +15,7 @@ class Hunk {
     ) {}
 }
 
-class SearchReplaceChange {
+export class SearchReplaceChange {
     constructor(
         public filepath: string,
         public searchBlock: string,
@@ -54,7 +54,7 @@ function findHunks(diffString: string): Hunk[] {
     return hunks;
 }
 
-function parseDiff(diffString: string): SearchReplaceChange[] {
+export function parseDiff(diffString: string): SearchReplaceChange[] {
     const hunks = findHunks(diffString);
     const searchReplaceBlocks: SearchReplaceChange[] = [];
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Box, Checkbox, Overlay } from '@mantine/core';
+import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Radio, Group, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import OpenAI from 'openai';
 import { notifications } from '@mantine/notifications';
@@ -7,7 +7,8 @@ import { VSCodeMessage } from './lib/VSCodeMessage';
 import { usePostHog } from 'posthog-js/react'
 import { CopyBlock } from 'react-code-blocks';
 import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT } from './lib/prompts';
-import { getFixedSearchReplace } from './lib/diff';
+import { getFixedSearchReplace, parseDiff, SearchReplaceChange } from './lib/diff';
+import { unifiedDiff } from 'difflib';
 
 
 type Generation = {
@@ -66,12 +67,7 @@ export default function App(){
 
   let [error, setError] = useState<string | undefined>();
 
-  let [addEverythingFromWorkspace, setAddEverythingFromWorkspace] = useState(false);
-
-  let [predictCurrentObjective, setPredictCurrentObjective] = useState(false);
-  let predictCurrentObjectiveRef = useRef<boolean>(false);
-  predictCurrentObjectiveRef.current = predictCurrentObjective;
-  let lastPredictionRequestSent = useRef<number>(0);
+  let [whichContext, setWhichContext] = useState<string>("");
 
   let posthogIdentifiedUserRef = useRef<boolean>(false);
 
@@ -125,13 +121,11 @@ export default function App(){
             }]
           }
         });
-      } else if (message.type == "processRequest") {
-        processRequestWithSnippets(message.content.snippets, message.content.query);
-      } else if (message.type == "recentChanges") {
-        console.log("Will send predict current objective request? : ", predictCurrentObjectiveRef.current, " last prediction sent: ", lastPredictionRequestSent.current, " current time: ", Date.now());
-        if(predictCurrentObjectiveRef.current && (Date.now() - 5000) > lastPredictionRequestSent.current){
-          lastPredictionRequestSent.current = Date.now();
-          processRecentChangesRequest(message.content["changes"], message.content["workspaceFiles"]);
+      } else if (message.type == "processRequest") { // going to be the same for single file or multiple files
+        if(message.content.whichContext === 'currentonly') {
+          processRequestWithSingleFile(message.content.snippet[0], message.content.query);
+        } else {
+          processRequestWithSnippets(message.content.snippets, message.content.query);
         }
       }
     });
@@ -146,51 +140,41 @@ export default function App(){
     await processRequestWithSnippets(snippets, query);
   }
 
-  let stopRequest = async () => {
-    if(abortController){
-      abortController.abort();
-      notifications.show({
-        message: "Cancelled the request."
-      });
-    } else {
-      notifications.show({
-        message: "No request to cancel"
-      })
-    }
-  }
+  let processRequestWithSingleFile = async(snippet: Snippet, query: string) => {
+    let response = await fetch("", {
+      body: JSON.stringify({
+        file: snippet.code,
+        request: query
+      }),
+      method: 'POST'
+    });
 
-  let processRecentChangesRequest = async (changes: string, workspaceFiles: string) => {
-    let url = (process.env.NODE_ENV === "development") ? "http://localhost:3001/api/recommend_prompts" : "https://superdocs-sand.vercel.app/api/recommend_prompts/";
-    console.log("Running processRecentChangesRequest function");
-    try {
-      if (changes.length < 10) {
-        console.log("Skipping - less that 30 characters detected.");
-        return;
-      }
-      
-      console.log("Sending recent changes: ", changes);
-      let response = await fetch(url, {
-        body: JSON.stringify({
-          changes: changes,
-          workspaceFiles: workspaceFiles
-        }),
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      if(response.ok) {
-        console.log("processRecentChangesRequest: got OK response from server");
-        let json = await response.json();
-        console.log("Recent changes request json: ", json);
-        setCandidateQueries(json['possibleQueries']);
-      } else {
-        console.error("Error with recent changes request: ", response);
-      }
-    } catch (e) {
-      console.log("Error when processing recent changes request");
-      console.error(e);
+    if(!response.body) {
+      setError("Error with loading response.body");
+      return;
     }
+
+    const reader = response.body.getReader();
+    let text = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if(done){
+        break;
+      }
+      let chunk = new TextDecoder().decode(value);
+      let splitChunks = chunk.split("sddata:");
+      for(var i = 0; i < splitChunks.length; i++){
+        let chunkChunk = splitChunks[i].trim();
+        try {
+          let chunkChunkJson = JSON.parse(chunkChunk);
+          text += chunkChunkJson["text"];
+        } catch (e) {
+          console.log("Error parsing a sub-chunk for the file streaming: ", chunkChunk, e);
+        }
+      }
+    }
+
+    writeMergeFile(snippet.filepath, snippet.code, text);
   }
 
   let processRequestWithSnippets = async (snippets: Snippet[], query: string) => {
@@ -313,6 +297,41 @@ export default function App(){
     });
   }
 
+  let writeMergeFile = (filepath: string, oldContents: string, newContents: string) => {
+    let generatedDiff = unifiedDiff(oldContents.split("\n"), newContents.split("\n"), {}).join("\n");
+    let searchReplaceChanges = parseDiff(generatedDiff);
+    let contentsWithMerge = oldContents;
+    searchReplaceChanges.forEach((snippet: SearchReplaceChange) => {
+      contentsWithMerge = contentsWithMerge.replace(
+        snippet.searchBlock,
+        `<<<<<<< SEARCH
+${snippet.searchBlock}
+=======
+${snippet.replaceBlock}
+>>>>>>> REPLACE
+        `
+      );
+    });
+
+    VSCodeMessage.postMessage({
+      type: "writeFile",
+      content: {
+        filepath: filepath,
+        code: contentsWithMerge
+      }
+    })
+  }
+
+  let getCurrentFileAndProcessRequest = () => {
+    VSCodeMessage.postMessage({
+      type: "getCurrentOpenFile",
+      content: {
+        runProcessRequest: true,
+        query: query
+      }
+    })
+  }
+
   let deleteSnippet = (index: number) => {
     console.log("Trying to delete snippet at index: ", index);
     setSnippets((prevSnippets: Snippet[]) => {
@@ -335,26 +354,14 @@ export default function App(){
     })
   }
 
-  let setPredictAndAllWorkspace = (newValue: boolean, checkbox: string) => { // If predict is true, then add all open tabs is true. If add all open tabs is false, then predict is true
-      if(checkbox === 'predict' && newValue){
-        setAddEverythingFromWorkspace(true);
-        setPredictCurrentObjective(true);
-        return;
-      }
-
-      if(checkbox == 'addAll' && !newValue){
-        setAddEverythingFromWorkspace(false);
-        setPredictCurrentObjective(false);
-        return;
-      }
-
-      if(checkbox == 'addAll'){
-        setAddEverythingFromWorkspace(newValue);
-      }
-
-      if(checkbox == 'predict') {
-        setPredictCurrentObjective(newValue);
-      }
+  let processRequestWithContext = () => {
+    if(whichContext === "addall") {
+      addWorkspaceAndProcessRequest();
+    } else if (whichContext === "currentonly") {
+      getCurrentFileAndProcessRequest();
+    } else {
+      processRequest();
+    }
   }
 
   if(openaiApiKey.length <= 0){
@@ -379,8 +386,8 @@ export default function App(){
         <Loader/>
       </Box>}
       
-      {(!addEverythingFromWorkspace && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
-      {!addEverythingFromWorkspace && <Container m="sm" opacity="80">
+      {(!(whichContext === 'snippets') && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
+      {!(whichContext === 'snippets') && <Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
             <details>
@@ -395,11 +402,21 @@ export default function App(){
         {/* <Overlay opacity={0.6}/> */}
       </Container>}
 
-      {addEverythingFromWorkspace && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
+      {(whichContext === 'addall') && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
-      {/* <Checkbox label="Check your changes to predict your current objective" checked={predictCurrentObjective} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'predict')}></Checkbox> */}
-      <Checkbox label="Add all open tabs" checked={addEverythingFromWorkspace} onChange={(e) => setPredictAndAllWorkspace(e.currentTarget.checked, 'addAll')}></Checkbox>
-      <Button onClick={() => addEverythingFromWorkspace ? addWorkspaceAndProcessRequest() : processRequest()}>Process request</Button>
+      <Radio
+        label="Context Type"
+        description=""
+        onChange={(e) => setWhichContext(e.target.value)}
+      >
+        <Group mt="xs">
+          <Radio value="addall" label="Add All Open Files in Workspace"/>
+          <Radio value="currentonly" label="Current File Only (fast model)"/>
+          <Radio value="snippets" label="Only Selected Snippets"/>
+        </Group>
+      </Radio>
+
+      <Button onClick={() => processRequestWithContext}>Process request</Button>
       {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
 
       {error && <Box color="red">

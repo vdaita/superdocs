@@ -195,6 +195,21 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						}
 					});
 				})();				
+			} else if (data.type === 'getCurrentOpenFile') {
+				let activeDocument = vscode.window.activeTextEditor?.document;
+				let snippetFile: Snippet = {
+					filepath: activeDocument?.uri.fsPath!,
+					code: activeDocument?.getText()!,
+					language: activeDocument?.languageId!
+				};
+				webviewView.webview.postMessage({
+					type: "processRequest", 
+					content: {
+						snippets: [snippetFile],
+						query: data.content.query,
+						whichContext: 'currentonly'
+					}
+				});
 			}
 		});
 
