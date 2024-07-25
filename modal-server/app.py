@@ -1,31 +1,129 @@
+# # Fast inference with vLLM (Mistral 7B)
+#
+# In this example, we show how to run basic inference, using [`vLLM`](https://github.com/vllm-project/vllm)
+# to take advantage of PagedAttention, which speeds up sequential inferences with optimized key-value caching.
+#
+# `vLLM` also supports a use case as a FastAPI server, which we will explore in a future guide. This example
+# walks through setting up an environment that works with `vLLM ` for basic inference.
+#
+# We are running the [Mistral 7B Instruct](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2) model here,
+# which is version of Mistral's 7B model that hase been fine-tuned to follow instructions.
+# You can expect 20 second cold starts and well over 1000 tokens/second. The larger the batch of prompts, the higher the throughput.
+# For example, with the 64 prompts below, we can produce 15k tokens in less than 7 seconds, a throughput of over 2k tokens/second.
+#
+# To run [any of the other supported models](https://vllm.readthedocs.io/en/latest/models/supported_models.html),
+# simply replace the model name in the download step.
+#
+# ## Setup
+#
+# First, we import the Modal client and define the model that we want to serve.
+
 import os
 import time
 
 import modal
 
-GPU_CONFIG = modal.gpu.A10G(count=1)
+MODEL_DIR = "/target_model"
+MODEL_NAME = "nuprl/EditCoder-6.7b-v1"
+MODEL_REVISION = "a470d872f4e77d47deb0708a9c6790a0def43fc6"
 
-image = modal.Image.debian_slim().pip_install(
-    "transformers==4.35.2",
-    "accelerate",
-    "torch",
-    "tokenizers",
-    "fastapi"
+DRAFT_MODEL_DIR = "/draft_model"
+DRAFT_MODEL_NAME = "deepseek-ai/deepseek-coder-1.3b-base"
+DRAFT_MODEL_REVISION = "c919139c3a9b4070729c8b2cca4847ab29ca8d94"
+
+
+# ## Define a container image
+#
+# We want to create a Modal image which has the model weights pre-saved to a directory. The benefit of this
+# is that the container no longer has to re-download the model from Hugging Face - instead, it will take
+# advantage of Modal's internal filesystem for faster cold starts.
+#
+# ### Download the weights
+# We can download the model to a particular directory using the HuggingFace utility function `snapshot_download`.
+
+# If you adapt this example to run another model,
+# note that for this step to work on a [gated model](https://huggingface.co/docs/hub/en/models-gated)
+# the `HF_TOKEN` environment variable must be set and provided as a [Modal Secret](https://modal.com/secrets).
+
+
+def download_model_to_image(model_dir, model_name, model_revision):
+    from huggingface_hub import snapshot_download
+    from transformers.utils import move_cache
+
+    os.makedirs(model_dir, exist_ok=True)
+
+    snapshot_download(
+        model_name,
+        local_dir=model_dir,
+        ignore_patterns=["*.pt", "*.bin"],  # Using safetensors
+        revision=model_revision,
+    )
+    move_cache()
+
+
+### Image definition
+# We’ll start from Modal's baseline ``debian_slim` image.
+# Then we’ll use `run_function` with `download_model_to_image` to write the model into the container image.
+image = (
+    modal.Image.from_registry(
+        "nvidia/cuda:12.2.0-devel-ubuntu22.04", add_python="3.11"
+    )
+    .apt_install(
+        "git"
+    )
+    .pip_install(
+        "torch",
+        "packaging",
+        "ninja",
+        "wheel",
+        "transformers==4.35.2",
+        "accelerate",
+        "bitsandbytes",
+        "ray==2.10.0",
+        "hf-transfer==0.1.6",
+        "huggingface_hub==0.22.2",
+    ).pip_install(
+        "flash-attn", extra_options="--no-build-isolation"
+    )
+    # Use the barebones hf-transfer package for maximum download speeds. No progress bar, but expect 700MB/s.
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    .run_function(
+        download_model_to_image,
+        timeout=60 * 20,
+        kwargs={
+            "model_dir": MODEL_DIR,
+            "model_name": MODEL_NAME,
+            "model_revision": MODEL_REVISION,
+        },
+    ).run_function(
+        download_model_to_image,
+        timeout=60*20,
+        kwargs={
+            "model_dir": DRAFT_MODEL_DIR,
+            "model_name": DRAFT_MODEL_NAME,
+            "model_revision": DRAFT_MODEL_REVISION
+        }
+    )
 )
 
-app = modal.App("superdocs-server")
+app = modal.App("superdocs-server", image=image)
 
-@app.cls(
-    gpu=GPU_CONFIG,
-    timeout=60 * 10,
-    container_idle_timeout=60 * 10,
-    allow_concurrent_inputs=10,
-    image=image,
-)
+# ## The model class
+#
+# The inference function is best represented with Modal's [class syntax](https://modal.com/docs/guide/lifecycle-functions),
+# using a `load_model` method decorated with `@modal.enter`. This enables us to load the model into memory just once,
+# every time a container starts up, and to keep it cached on the GPU for subsequent invocations of the function.
+#
+# The `vLLM` library allows the code to remain quite clean.
+
+# Hint: try out an H100 if you've got a large model or big batches!
+# GPU_CONFIG = modal.gpu.A10G(count=1)  # 40GB A100 by default
+GPU_CONFIG = modal.gpu.A100(size="40GB", count=1)
+
+@app.cls(gpu=GPU_CONFIG)
 class Model:
-
     @modal.enter()
-    def load_models(self):
+    def load_model(self):
         from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteriaList, MaxLengthCriteria
         from tokenizers import Tokenizer
         from transformers.generation.utils import _crop_past_key_values 
@@ -34,7 +132,7 @@ class Model:
         import copy
 
         target_model_name = "nuprl/EditCoder-6.7b-v1"
-        draft_model_name = "deepseek-ai/deepseek-coder-1.3b"
+        draft_model_name = "deepseek-ai/deepseek-coder-1.3b-base"
 
         self.target_model = AutoModelForCausalLM.from_pretrained(target_model_name, trust_remote_code=True, device_map="auto", torch_dtype=torch.float16, use_flash_attention_2=True)
         self.draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, trust_remote_code=True, device_map="auto", load_in_4bit=True, torch_dtype=torch.float16, use_flash_attention_2=True)
@@ -149,7 +247,7 @@ class Model:
                 return input_ids[0, input_token_len:], model_kwargs
         
         @torch.no_grad()
-        async def greedy_search_assistant_pld(
+        def greedy_search_assistant_pld(
                 self,
                 input_ids: torch.LongTensor,
                 assistant_model: torch.nn.Module,
@@ -167,7 +265,7 @@ class Model:
                 max_draft_num_candidate_tokens = 300,
                 **model_kwargs,
             ):
-
+                
                 # init values
                 stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
                 pad_token_id = pad_token_id if pad_token_id is not None else self.generation_config.pad_token_id
@@ -184,12 +282,14 @@ class Model:
                 i = 0
                 assistant_model_kwargs = {}
 
+                start_length = input_ids.shape[-1]
+
                 while True:
                     i += 1
                     cur_len = input_ids.shape[-1]                    
                     input_ids = input_ids.to(assistant_model.device)
 
-                    candidate_pred_tokens, assistant_model_kwargs = assistant_model.assistant_greedy_search_pld(input_ids,
+                    candidate_pred_tokens, assistant_model_kwargs = assistant_model.assistant_decode(input_ids,
                         stopping_criteria=StoppingCriteriaList([MaxLengthCriteria(max_length=cur_len + max_draft_num_candidate_tokens)]),
                         draft_num_candidate_rounds=assistant_draft_candidate_rounds,
                         prompt_matching_window_size=assistant_prompt_matching_window_size,
@@ -256,13 +356,14 @@ class Model:
                     if stopping_criteria(input_ids, scores):
                         break
                 
-                return tokenizer.batch_decode(input_ids, skip_special_tokens=True)[0]
-                # return input_ids
+                decoded = tokenizer.batch_decode(input_ids[:, start_length:], skip_special_tokens=True)[0]
+                return decoded
 
         self.target_model.greedy_search_assistant_pld = greedy_search_assistant_pld.__get__(self.target_model, type(self.target_model))
         self.draft_model.assistant_decode = assistant_decode.__get__(self.draft_model, type(self.draft_model))
-        print(f"The model has loaded.")
 
+
+    # @modal.method()
     @modal.web_endpoint(method="POST", docs=True)
     def generate(self, request: dict):
         from transformers import StoppingCriteriaList, MaxLengthCriteria
@@ -271,9 +372,14 @@ class Model:
 
         formatted = f"# Code Before:\n{file_contents}\n# Instruction: {edit_instruction}\n# Code After:\n"
         inputs = self.tokenizer(formatted, return_tensors="pt")
-        return self.target_model.greedy_search_assistant_pld(
+
+        for key in inputs:
+            inputs[key] = inputs[key].to(self.target_model.device)
+
+        response = self.target_model.greedy_search_assistant_pld(
             inputs.input_ids,
             self.draft_model,
+            self.tokenizer,
             attention_mask=inputs.attention_mask,
             stopping_criteria=StoppingCriteriaList([MaxLengthCriteria(max_length=len(inputs.input_ids[0])*2 + 300)]),
             assistant_prompt_matching_window_size = 3,
@@ -285,21 +391,18 @@ class Model:
             eos_token_id=self.tokenizer.eos_token_id,
         )
 
-    # TODO: use mamba models to preprocess relevant files and come up with a plan
+        print("Response: ", response)
 
-    @modal.exit()
-    def stop_engine(self):
-        ...
+        return response
 
-import requests
 
+# ## Run the model
+# We define a [`local_entrypoint`](https://modal.com/docs/guide/apps#entrypoints-for-ephemeral-apps) to call our remote function
+# sequentially for a list of inputs. You can run this locally with `modal run vllm_inference.py`.
 @app.local_entrypoint()
 def main():
-    print("Running local entrypoint")
-    model = Model()
-    response = requests.post(
-        model.generate.web_url,
-        json={
+    import requests
+    req = {
             "file_contents": """class CSVParser:
 def __init__(self, csv: str):
     self.csv = csv
@@ -312,5 +415,13 @@ def contents(self) -> list[list[str]]:
     return output""",
             "edit_instruction": "Add a function called `header` which returns the first row of a csv file as a list of strings, where every element in the list is a column in the row."
         }
+#     model = Model()
+#     model.generate.remote(req)
+    model = Model()
+
+    response = requests.post(
+        model.generate.web_url,
+        json=req,
     )
-    print(response.text)
+    assert response.ok, response.status_code
+    print(response)
