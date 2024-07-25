@@ -3,21 +3,14 @@ import time
 
 import modal
 
-GPU_CONFIG = modal.gpu.A100(size="40GB", count=1)
+GPU_CONFIG = modal.gpu.A10G(count=1)
 
-image = (
-    modal.Image.debian_slim(python_version="3.10")
-    .pip_install(
-        "transformers==4.35.2",
-        "hf-transfer==0.1.6",
-        "huggingface_hub==0.22.2",
-        "causal-conv1d>=1.2.0",
-        "mamba-ssm",
-        "torch",
-        "pydantic",
-        "rapidfuzz"
-    )
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+image = modal.Image.debian_slim().pip_install(
+    "transformers==4.35.2",
+    "accelerate",
+    "torch",
+    "tokenizers",
+    "fastapi"
 )
 
 app = modal.App("superdocs-server")
@@ -33,7 +26,7 @@ class Model:
 
     @modal.enter()
     def load_models(self):
-        from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteriaList, MaxLengthCriteria, MambaConfig, MambaForCausalLM
+        from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteriaList, MaxLengthCriteria
         from tokenizers import Tokenizer
         from transformers.generation.utils import _crop_past_key_values 
         from typing import Optional, Union, List
@@ -46,9 +39,7 @@ class Model:
         self.target_model = AutoModelForCausalLM.from_pretrained(target_model_name, trust_remote_code=True, device_map="auto", torch_dtype=torch.float16, use_flash_attention_2=True)
         self.draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, trust_remote_code=True, device_map="auto", load_in_4bit=True, torch_dtype=torch.float16, use_flash_attention_2=True)
         self.tokenizer = AutoTokenizer.from_pretrained(draft_model_name)
-        
-        self.planner_model = MambaForCausalLM.from_pretrained("mistralai/mamba-codestral-7B-v0.1", device_map="auto")
-        
+                
         NEWLINE_THRESHOLD = 5
 
         @torch.no_grad()
@@ -256,7 +247,7 @@ class Model:
                     if "past_key_values" in assistant_model_kwargs:
                         assistant_model_kwargs["past_key_values"] = _crop_past_key_values(assistant_model, assistant_model_kwargs["past_key_values"], new_cache_size - 1) 
                 
-                    yield tokenizer.batch_decode(valid_tokens, skip_special_tokens=True)[0]
+                    # yield tokenizer.batch_decode(valid_tokens, skip_special_tokens=True)[0]
 
                     model_kwargs["past_key_values"] = outputs.past_key_values
                     if (valid_tokens == eos_token_id_tensor.item()).any():
@@ -264,20 +255,23 @@ class Model:
                     
                     if stopping_criteria(input_ids, scores):
                         break
-
-                return input_ids
+                
+                return tokenizer.batch_decode(input_ids, skip_special_tokens=True)[0]
+                # return input_ids
 
         self.target_model.greedy_search_assistant_pld = greedy_search_assistant_pld.__get__(self.target_model, type(self.target_model))
         self.draft_model.assistant_decode = assistant_decode.__get__(self.draft_model, type(self.draft_model))
         print(f"The model has loaded.")
 
-    @modal.method()
-    async def completion_stream(self, file_contents: str, edit_instruction: str):
+    @modal.web_endpoint(method="POST", docs=True)
+    def generate(self, request: dict):
         from transformers import StoppingCriteriaList, MaxLengthCriteria
+
+        file_contents, edit_instruction = request["file_contents"], request["edit_instruction"]
 
         formatted = f"# Code Before:\n{file_contents}\n# Instruction: {edit_instruction}\n# Code After:\n"
         inputs = self.tokenizer(formatted, return_tensors="pt")
-        for chunk in self.target_model.greedy_search_assistant_pld(
+        return self.target_model.greedy_search_assistant_pld(
             inputs.input_ids,
             self.draft_model,
             attention_mask=inputs.attention_mask,
@@ -289,8 +283,7 @@ class Model:
             use_cache=True, 
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-        ):
-            yield chunk
+        )
 
     # TODO: use mamba models to preprocess relevant files and come up with a plan
 
@@ -298,37 +291,26 @@ class Model:
     def stop_engine(self):
         ...
 
-from pathlib import Path
-from modal import Mount, asgi_app
+import requests
 
-@app.function(
-    allow_concurrent_inputs=20,
-    timeout=60 * 10,
-)
-@asgi_app(label="model-inference")
-def inference_app():
-    import json
+@app.local_entrypoint()
+def main():
+    print("Running local entrypoint")
+    model = Model()
+    response = requests.post(
+        model.generate.web_url,
+        json={
+            "file_contents": """class CSVParser:
+def __init__(self, csv: str):
+    self.csv = csv
 
-    import fastapi
-    from fastapi.responses import StreamingResponse
-    from pydantic import BaseModel
-    from typing import List
-
-    web_app = fastapi.FastAPI()
-
-    class SingleFileQuery(BaseModel):
-        file: str
-        request: str
-
-    @web_app.post("/sfquery/")
-    async def single_file_query(query: SingleFileQuery): # Just send everything forward
-        async def generate():
-            async for text in Model().completion_stream.remote_gen.aio(
-                query.file,
-                query.request
-            ):
-                yield f"sddata: {json.dumps(dict(text=text), ensure_ascii=False)}\n\n"
-
-        return StreamingResponse(generate(), media_type="text/event-stream")
-
-    return web_app
+def contents(self) -> list[list[str]]:
+    lines = self.csv.split("\n")
+    output = []
+    for line in lines:
+        output.append(line.split(","))
+    return output""",
+            "edit_instruction": "Add a function called `header` which returns the first row of a csv file as a list of strings, where every element in the list is a column in the row."
+        }
+    )
+    print(response.text)
