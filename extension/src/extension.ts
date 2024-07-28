@@ -122,52 +122,52 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						}
 					});
 
-					this.intervalPrediction = setInterval(async () => {
-						console.log("Running interval prediction");
-						let currentWorkspaceFiles = await this.getWorkspaceDocuments();
-						let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
+					// this.intervalPrediction = setInterval(async () => {
+					// 	console.log("Running interval prediction");
+					// 	let currentWorkspaceFiles = await this.getWorkspaceDocuments();
+					// 	let currentWorkspaceMap = this.documentListToMap(currentWorkspaceFiles);
 
-						let changes = "";
-						let workspaceFiles = "";
+					// 	let changes = "";
+					// 	let workspaceFiles = "";
 
-						let previousChangesToAnalyze;
-						if(this.changesQueue.length > 5){
-							previousChangesToAnalyze = this.changesQueue.shift(); // Will also pop that last element of the array
-						} else if (this.changesQueue.length > 1) {
-							previousChangesToAnalyze = this.changesQueue[0];
-						}
-						this.changesQueue.push(currentWorkspaceMap);
-						console.log("Length of changesQueue: ", this.changesQueue);
+					// 	let previousChangesToAnalyze;
+					// 	if(this.changesQueue.length > 5){
+					// 		previousChangesToAnalyze = this.changesQueue.shift(); // Will also pop that last element of the array
+					// 	} else if (this.changesQueue.length > 1) {
+					// 		previousChangesToAnalyze = this.changesQueue[0];
+					// 	}
+					// 	this.changesQueue.push(currentWorkspaceMap);
+					// 	console.log("Length of changesQueue: ", this.changesQueue);
 						
-						let changedFiles = [];
+					// 	let changedFiles = [];
 
-						if(previousChangesToAnalyze){
-							// Find new documents that have been opened;
-							for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
-								if(!previousChangesToAnalyze.has(currentFilename)) {
-									changes += `Opened file: ${currentFilename}\n`;
-									changedFiles.push(currentFilename);
-								} else if (currentCode !== previousChangesToAnalyze.get(currentFilename)) {
-									let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
-									}).join("\n");
-									changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
-									changedFiles.push(currentFilename);
-								}
-								workspaceFiles += `File: ${currentFilename}\nCode:\n${currentCode}\n`
-							}
-						}
+					// 	if(previousChangesToAnalyze){
+					// 		// Find new documents that have been opened;
+					// 		for(let [currentFilename, currentCode] of currentWorkspaceMap.entries()){
+					// 			if(!previousChangesToAnalyze.has(currentFilename)) {
+					// 				changes += `Opened file: ${currentFilename}\n`;
+					// 				changedFiles.push(currentFilename);
+					// 			} else if (currentCode !== previousChangesToAnalyze.get(currentFilename)) {
+					// 				let diff = difflib.unifiedDiff(previousChangesToAnalyze.get(currentFilename)!.split("\n"), currentCode.split("\n"), {
+					// 				}).join("\n");
+					// 				changes += `In file: ${currentFilename}, the following changes were made very recently by the user trying to do the following: \n ${diff}`
+					// 				changedFiles.push(currentFilename);
+					// 			}
+					// 			workspaceFiles += `File: ${currentFilename}\nCode:\n${currentCode}\n`
+					// 		}
+					// 	}
 						
-						console.log("Sending recent changes: ", changes)
+					// 	console.log("Sending recent changes: ", changes)
 
-						webviewView.webview.postMessage({
-							type: "recentChanges",
-							content: {
-								changes: changes,
-								workspaceFiles: workspaceFiles
-							}
-						});
+					// 	webviewView.webview.postMessage({
+					// 		type: "recentChanges",
+					// 		content: {
+					// 			changes: changes,
+					// 			workspaceFiles: workspaceFiles
+					// 		}
+					// 	});
 
-					}, 5000);
+					// }, 5000);
 					break;
 			}
 			if(data.type === "replaceSnippet"){
@@ -178,8 +178,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				file = file.replace(data.content.originalCode, data.content.newCode);
 				fs.writeFileSync(joinedFilepath, file);
 			} else if (data.type === "writeFile") {
-				let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
-				fs.writeFileSync(joinedFilepath, data.content.code);
+				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
+				fs.writeFileSync(data.content.filepath, data.content.code);
 			} else if (data.type === "semanticSearch") {
 				let requestString = data.query;
 				
@@ -202,6 +202,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					code: activeDocument?.getText()!,
 					language: activeDocument?.languageId!
 				};
+				console.log("Snippet file for single file edit: ", snippetFile)
 				webviewView.webview.postMessage({
 					type: "processRequest", 
 					content: {

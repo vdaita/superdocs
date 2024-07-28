@@ -23,5 +23,11 @@ module.exports = function override(config, env) {
         return plugin;
     });
 
+    // Allow for difflib to run with the weird asserts
+    config.resolve.fallback = {
+        ...config.resolve.fallback,
+        assert: require.resolve("assert/")
+    };
+
     return config;
 }

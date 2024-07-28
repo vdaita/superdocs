@@ -77,6 +77,8 @@ export default function App(){
   let [abortController, setAbortController] = useState<AbortController | undefined>();
   const posthog = usePostHog();
 
+  let [miscText, setMiscText] = useState<string>("");
+
   useEffect(() => {
     console.log("Running useEffect");
     VSCodeMessage.onMessage((message) => {
@@ -123,7 +125,7 @@ export default function App(){
         });
       } else if (message.type == "processRequest") { // going to be the same for single file or multiple files
         if(message.content.whichContext === 'currentonly') {
-          processRequestWithSingleFile(message.content.snippet[0], message.content.query);
+          processRequestWithSingleFile(message.content.snippets[0], message.content.query);
         } else {
           processRequestWithSnippets(message.content.snippets, message.content.query);
         }
@@ -141,40 +143,34 @@ export default function App(){
   }
 
   let processRequestWithSingleFile = async(snippet: Snippet, query: string) => {
-    let response = await fetch("", {
-      body: JSON.stringify({
-        file: snippet.code,
-        request: query
-      }),
-      method: 'POST'
-    });
-
-    if(!response.body) {
-      setError("Error with loading response.body");
-      return;
-    }
-
-    const reader = response.body.getReader();
-    let text = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if(done){
-        break;
-      }
-      let chunk = new TextDecoder().decode(value);
-      let splitChunks = chunk.split("sddata:");
-      for(var i = 0; i < splitChunks.length; i++){
-        let chunkChunk = splitChunks[i].trim();
-        try {
-          let chunkChunkJson = JSON.parse(chunkChunk);
-          text += chunkChunkJson["text"];
-        } catch (e) {
-          console.log("Error parsing a sub-chunk for the file streaming: ", chunkChunk, e);
+    setLoading(true);
+    try {
+      let response = await fetch("https://vdaita--superdocs-server-model-generate.modal.run", {
+        body: JSON.stringify({
+          "file_contents": snippet.code,
+          "edit_instruction": query
+        }),
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
         }
+      });
+  
+      if(!response.body) {
+        setError("Error with loading response.body");
+        return;
       }
+  
+      let text = await response.text();
+      console.log("Got text from the server: ", text);
+      setMiscText(text);
+      writeMergeFile(snippet.filepath, snippet.code, text);
+
+    } catch (e) {
+      console.error("Error caught: ", e);
     }
 
-    writeMergeFile(snippet.filepath, snippet.code, text);
+    setLoading(false);
   }
 
   let processRequestWithSnippets = async (snippets: Snippet[], query: string) => {
@@ -300,6 +296,7 @@ export default function App(){
   let writeMergeFile = (filepath: string, oldContents: string, newContents: string) => {
     let generatedDiff = unifiedDiff(oldContents.split("\n"), newContents.split("\n"), {}).join("\n");
     let searchReplaceChanges = parseDiff(generatedDiff);
+    console.log("search replace changes: ", searchReplaceChanges);
     let contentsWithMerge = oldContents;
     searchReplaceChanges.forEach((snippet: SearchReplaceChange) => {
       contentsWithMerge = contentsWithMerge.replace(
@@ -312,6 +309,8 @@ ${snippet.replaceBlock}
         `
       );
     });
+
+    
 
     VSCodeMessage.postMessage({
       type: "writeFile",
@@ -375,12 +374,6 @@ ${snippet.replaceBlock}
       <Textarea onChange={(e) => setQuery(e.target.value)} size="lg" value={query} placeholder={"Query"}>
       </Textarea>
 
-      {candidateQueries.map((item, index) => (
-        <Card shadow="sm" padding="xs" radius="md" withBorder onClick={() => setQuery(item)}>
-          <Text size="sm">{item}</Text>
-        </Card>
-      ))}
-
       {loading && <Box>
         <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews.</Text>
         <Loader/>
@@ -404,7 +397,19 @@ ${snippet.replaceBlock}
 
       {(whichContext === 'addall') && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
-      <Radio
+
+      <Radio.Group
+        value={whichContext}
+        onChange={setWhichContext}
+        name="whichContext"
+        withAsterisk
+      >
+        <Radio value="addall" label="Add All Open Files in Workspace"/>
+        <Radio value="currentonly" label="Current File Only (fast model)"/>
+        <Radio value="snippets" label="Only Selected Snippets"/>
+      </Radio.Group>
+
+      {/* <Radio
         label="Context Type"
         description=""
         onChange={(e) => setWhichContext(e.target.value)}
@@ -414,14 +419,16 @@ ${snippet.replaceBlock}
           <Radio value="currentonly" label="Current File Only (fast model)"/>
           <Radio value="snippets" label="Only Selected Snippets"/>
         </Group>
-      </Radio>
+      </Radio> */}
 
-      <Button onClick={() => processRequestWithContext}>Process request</Button>
+      <Button onClick={() => processRequestWithContext()}>Process request</Button>
       {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
 
       {error && <Box color="red">
         {error}
       </Box>}
+
+      <Text>{miscText}</Text>
 
       <Tabs value={"0"}>
         <Tabs.List>

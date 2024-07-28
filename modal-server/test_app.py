@@ -3,7 +3,7 @@ import requests
 def main():
     print("Running local entrypoint")
     response = requests.post(
-        "https://vdaita--superdocs-server-model-generate-dev.modal.run",
+        "https://vdaita--superdocs-server-model-generate.modal.run",
         json={
             "file_contents": """class CSVParser:
 def __init__(self, csv: str):

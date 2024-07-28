@@ -134,7 +134,7 @@ class Model:
         target_model_name = "nuprl/EditCoder-6.7b-v1"
         draft_model_name = "deepseek-ai/deepseek-coder-1.3b-base"
 
-        self.target_model = AutoModelForCausalLM.from_pretrained(target_model_name, trust_remote_code=True, device_map="auto", torch_dtype=torch.float16, use_flash_attention_2=True)
+        self.target_model = AutoModelForCausalLM.from_pretrained(target_model_name, trust_remote_code=True, device_map="auto", load_in_8bit=True, torch_dtype=torch.float16, use_flash_attention_2=True)
         self.draft_model = AutoModelForCausalLM.from_pretrained(draft_model_name, trust_remote_code=True, device_map="auto", load_in_4bit=True, torch_dtype=torch.float16, use_flash_attention_2=True)
         self.tokenizer = AutoTokenizer.from_pretrained(draft_model_name)
                 
@@ -367,6 +367,7 @@ class Model:
     @modal.web_endpoint(method="POST", docs=True)
     def generate(self, request: dict):
         from transformers import StoppingCriteriaList, MaxLengthCriteria
+        import json
 
         file_contents, edit_instruction = request["file_contents"], request["edit_instruction"]
 
@@ -393,7 +394,7 @@ class Model:
 
         print("Response: ", response)
 
-        return response
+        return json.dumps({"text": response})
 
 
 # ## Run the model
