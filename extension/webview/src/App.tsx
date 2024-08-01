@@ -9,6 +9,7 @@ import { CopyBlock } from 'react-code-blocks';
 import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT } from './lib/prompts';
 import { getFixedSearchReplace, parseDiff, SearchReplaceChange } from './lib/diff';
 import { unifiedDiff } from 'difflib';
+import { createTwoFilesPatch } from 'diff';
 
 
 type Generation = {
@@ -145,10 +146,10 @@ export default function App(){
   let processRequestWithSingleFile = async(snippet: Snippet, query: string) => {
     setLoading(true);
     try {
-      let response = await fetch("https://vdaita--superdocs-server-model-generate.modal.run", {
+      let response = await fetch("http://localhost:8000/edit_request", {
         body: JSON.stringify({
-          "file_contents": snippet.code,
-          "edit_instruction": query
+          "file_content": snippet.code,
+          "query": query
         }),
         method: 'POST',
         headers: {
@@ -163,8 +164,16 @@ export default function App(){
   
       let text = await response.text();
       console.log("Got text from the server: ", text);
-      setMiscText(text);
-      writeMergeFile(snippet.filepath, snippet.code, text);
+      let jsonText = JSON.parse(text);
+      setMiscText(jsonText["text"]);
+      // writeMergeFile(snippet.filepath, snippet.code, jsonText);
+      VSCodeMessage.postMessage({
+        type: "writeFile",
+        content: {
+          filepath: snippet.filepath,
+          code: jsonText["text"]
+        }
+      });
 
     } catch (e) {
       console.error("Error caught: ", e);
@@ -291,34 +300,6 @@ export default function App(){
         query: query
       }
     });
-  }
-
-  let writeMergeFile = (filepath: string, oldContents: string, newContents: string) => {
-    let generatedDiff = unifiedDiff(oldContents.split("\n"), newContents.split("\n"), {}).join("\n");
-    let searchReplaceChanges = parseDiff(generatedDiff);
-    console.log("search replace changes: ", searchReplaceChanges);
-    let contentsWithMerge = oldContents;
-    searchReplaceChanges.forEach((snippet: SearchReplaceChange) => {
-      contentsWithMerge = contentsWithMerge.replace(
-        snippet.searchBlock,
-        `<<<<<<< SEARCH
-${snippet.searchBlock}
-=======
-${snippet.replaceBlock}
->>>>>>> REPLACE
-        `
-      );
-    });
-
-    
-
-    VSCodeMessage.postMessage({
-      type: "writeFile",
-      content: {
-        filepath: filepath,
-        code: contentsWithMerge
-      }
-    })
   }
 
   let getCurrentFileAndProcessRequest = () => {

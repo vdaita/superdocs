@@ -17,7 +17,7 @@
     "@uiw/react-md-editor": "^4.0.3",
     "assert": "^2.1.0",
     "axios": "^1.6.0",
-    "diff": "^5.1.0",
+    "diff": "^5.2.0",
     "difflib": "^0.2.4",
     "fastest-levenshtein": "^1.0.16",
     "fuzzball": "^2.1.2",

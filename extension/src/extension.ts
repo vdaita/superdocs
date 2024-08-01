@@ -179,6 +179,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 				fs.writeFileSync(joinedFilepath, file);
 			} else if (data.type === "writeFile") {
 				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
+				console.log("In writeFile: data submitted: ", data);
 				fs.writeFileSync(data.content.filepath, data.content.code);
 			} else if (data.type === "semanticSearch") {
 				let requestString = data.query;
