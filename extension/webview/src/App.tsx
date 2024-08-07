@@ -1,55 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Container, Button, Text, TextInput, Textarea, Stack, Tabs, Card, Badge, Loader, Radio, Group, Box, Checkbox, Overlay } from '@mantine/core';
 import EnhancedMarkdown from './lib/EnhancedMarkdown';
-import OpenAI from 'openai';
-import { notifications } from '@mantine/notifications';
 import { VSCodeMessage } from './lib/VSCodeMessage';
-import { usePostHog } from 'posthog-js/react'
 import { CopyBlock } from 'react-code-blocks';
-import { AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT } from './lib/prompts';
-import { getFixedSearchReplace, parseDiff, SearchReplaceChange } from './lib/diff';
-import { unifiedDiff } from 'difflib';
-import { createTwoFilesPatch } from 'diff';
-
-
-type Generation = {
-  planCompleted: boolean;
-  changesCompleted: boolean;
-  changes: {
-    filepath: string;
-    instruction: string;
-    location: string;
-    search_block: string;
-    replace_block: string;
-  }[];
-  rank: number;
-  progress: string;
-  plan: string;
-  summary: string;
-};
+import axios from 'axios';
 
 type Plan = {
   message: string
   changes: Change[] 
 }
 
-type EditInstruction = {
-  instruction: string
-  filepath: string
-  changesCompleted: boolean
-  changeUpdate?: string
-  changes?: Change[]
-}
-
 type Change = {
   filepath: string
   searchBlock: string
   replaceBlock: string
-}
-
-type NewFile = {
-  filepath: string,
-  code: string,
 }
 
 type Snippet = {
@@ -62,21 +26,19 @@ export default function App(){
   let [query, setQuery] = useState("");
   let [snippets, setSnippets] = useState<Snippet[]>([]);
 
-  let [openaiApiKey, setOpenAIApiKey] = useState("");
-  
+  // let [openaiApiKey, setOpenAIApiKey] = useState("");
+  let [serverUrl, setServerUrl] = useState("https://127.0.0.1:8000");
+
   let [plans, setPlans] = useState<Plan[]>([]);
 
   let [error, setError] = useState<string | undefined>();
 
   let [whichContext, setWhichContext] = useState<string>("");
 
-  let posthogIdentifiedUserRef = useRef<boolean>(false);
-
   let [candidateQueries, setCandidateQueries] = useState([]);
 
   let [loading, setLoading] = useState<boolean>(false);
   let [abortController, setAbortController] = useState<AbortController | undefined>();
-  const posthog = usePostHog();
 
   let [miscText, setMiscText] = useState<string>("");
 
@@ -86,14 +48,9 @@ export default function App(){
       message = message.data;
       console.log("Received message: ", message);
       if(message.type === "context") {
-        if(message.content.telemetryAllowed) {
-          posthog.opt_in_capturing();
-        } else {
-          posthog.opt_out_capturing();
-        }
-        
-        if(message.content.openaiApiKey) {
-          setOpenAIApiKey(message.content.openaiApiKey);
+        if(message.content.serverUrl) {
+          
+          // setServerUrl(message.content.serverUrl);
         }
       } else if (message.type === "snippet") {
         console.log("Received snippet: ", message)
@@ -127,8 +84,6 @@ export default function App(){
       } else if (message.type == "processRequest") { // going to be the same for single file or multiple files
         if(message.content.whichContext === 'currentonly') {
           processRequestWithSingleFile(message.content.snippets[0], message.content.query);
-        } else {
-          processRequestWithSnippets(message.content.snippets, message.content.query);
         }
       }
     });
@@ -138,148 +93,51 @@ export default function App(){
     // TODO: listen for a change in the authentication state
   }, []);
 
-  // TOOD: make sure that you allow the person to reclick for anonymous authentication again.
-  let processRequest = async () => {
-    await processRequestWithSnippets(snippets, query);
-  }
-
   let processRequestWithSingleFile = async(snippet: Snippet, query: string) => {
     setLoading(true);
+    setMiscText("");
     try {
-      let response = await fetch("http://localhost:8000/edit_request", {
-        body: JSON.stringify({
+      console.log("Server url being used: ", serverUrl);
+      const url = 'http://0.0.0.0:8000/edit_request';
+
+      const data = {
           "file_content": snippet.code,
           "query": query
-        }),
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      };
+
+      const options = {
+          method: 'POST',
+          headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(data)
+      };
+
+      let responseFetch = await fetch(url, options)
+      let response = await responseFetch.json();
   
-      if(!response.body) {
-        setError("Error with loading response.body");
-        return;
-      }
-  
-      let text = await response.text();
-      console.log("Got text from the server: ", text);
-      let jsonText = JSON.parse(text);
-      setMiscText(jsonText["text"]);
+      // const text = response.data;
+      // console.log("Got text from the server: ", text);
+      // const jsonText = JSON.parse(text);
+
+      let formattedText = `Tokens generated: ${response['tokens_generated']}\nTime: ${response['time']}\nTokens per second: ${response['tokens_generated']/response['time']}\n\`\`\`\n${response['text']}\n\`\`\``;
+
+      setMiscText(formattedText);
       // writeMergeFile(snippet.filepath, snippet.code, jsonText);
+
       VSCodeMessage.postMessage({
         type: "writeFile",
         content: {
           filepath: snippet.filepath,
-          code: jsonText["text"]
+          code: response["text"]
         }
       });
-
+  
     } catch (e) {
       console.error("Error caught: ", e);
     }
-
-    setLoading(false);
-  }
-
-  let processRequestWithSnippets = async (snippets: Snippet[], query: string) => {
-    posthog?.capture("process_snippets");
-    setError("");
-
-    console.log("Current environment: ", process.env.NODE_ENV);
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-    }, 5000);
-
-    try {
-      console.log("Sending snippets and query: ", snippets, query);
-
-      const openai = new OpenAI({
-        apiKey: openaiApiKey,
-        dangerouslyAllowBrowser: true
-      });
-
-      let fileContextStr = "";
-      snippets.forEach((snippet) => {
-          fileContextStr += `[${snippet.filepath}]\n \`\`\`\n${snippet.code}\n\`\`\`\n`
-      });
-
-      let completion = await openai.chat.completions.create({
-        messages: [{
-          "role": "system",
-          "content": AIDER_UDIFF_PLAN_AND_EXECUTE_PROMPT
-        }, {
-          "role": "user",
-          "content": `# File context:\n${fileContextStr}\n# Instruction\n${query}`
-        }],
-        model: "gpt-4o",
-        stream: true
-      });
-
-      let responseText = "";
-
-      for await(const chunk of completion) {
-        let chunkText = chunk.choices[0].delta.content;
-        if(chunkText) {
-          responseText += chunkText;
-          setPlans([
-            {
-              "message": responseText,
-              "changes": []
-            }
-          ]);
-        }
-      }
-
-      let fpSet = new Set<string>();
-      snippets.forEach((snippet) => { fpSet.add(snippet.filepath); });
-      let filepaths = Array.from(fpSet);
-
-      let unifiedSnippets: Snippet[] = [];
-      let files = new Map();
-      filepaths.forEach((filepath: string) => {
-          let codeChunks: string[] = [];
-          let lang: string = "";            
-          snippets.forEach((snippet) => {
-              if(snippet.filepath === filepath) {
-                  codeChunks.push(snippet.code);
-                  lang = snippet.language;
-              }
-          });
-          unifiedSnippets.push({
-              filepath: filepath,
-              code: codeChunks.join("\n----\n"),
-              language: lang
-          });
-          files.set(filepath, codeChunks.join("\n----\n"));
-      });
-
-
-      let fixedSearchReplaces = getFixedSearchReplace(files, responseText);
-      let changes: Change[] = [];
-      fixedSearchReplaces.forEach((fsr) => {
-          if(fsr.searchBlock.trim().length > 0 && fsr.replaceBlock.trim().length > 0){ // empty SRs are leaking
-              changes?.push({
-                  filepath: fsr.filepath,
-                  searchBlock: fsr.searchBlock,
-                  replaceBlock: fsr.replaceBlock
-              });
-          }
-      });
-
-      setPlans([
-        {
-          "message": responseText,
-          "changes": changes
-        }
-      ]);
-
-    } catch (e) {
-      console.error("Error: ", e);
-      setError("There was an error.");
-    }
-    console.log("Reached the end of the function.");
+  
     setLoading(false);
   }
 
@@ -322,8 +180,6 @@ export default function App(){
   }
   
   let sendChange = (filepath: string, search_block: string, replace_block: string) => {
-    posthog?.capture("send_change");
-
     VSCodeMessage.postMessage({
       type: "replaceSnippet",
       content: {
@@ -335,19 +191,9 @@ export default function App(){
   }
 
   let processRequestWithContext = () => {
-    if(whichContext === "addall") {
-      addWorkspaceAndProcessRequest();
-    } else if (whichContext === "currentonly") {
+    if (whichContext === "currentonly") {
       getCurrentFileAndProcessRequest();
-    } else {
-      processRequest();
     }
-  }
-
-  if(openaiApiKey.length <= 0){
-    return (
-      <Text m={4}>There needs to be an OpenAI key loaded in settings. You may want to refresh the window: Ctrl-Shift-P → Reload Window.</Text>
-    )
   }
 
   return (
@@ -382,34 +228,19 @@ export default function App(){
       <Radio.Group
         value={whichContext}
         onChange={setWhichContext}
-        name="whichContext"
+        name="currentonly"
         withAsterisk
       >
-        <Radio value="addall" label="Add All Open Files in Workspace"/>
         <Radio value="currentonly" label="Current File Only (fast model)"/>
-        <Radio value="snippets" label="Only Selected Snippets"/>
       </Radio.Group>
 
-      {/* <Radio
-        label="Context Type"
-        description=""
-        onChange={(e) => setWhichContext(e.target.value)}
-      >
-        <Group mt="xs">
-          <Radio value="addall" label="Add All Open Files in Workspace"/>
-          <Radio value="currentonly" label="Current File Only (fast model)"/>
-          <Radio value="snippets" label="Only Selected Snippets"/>
-        </Group>
-      </Radio> */}
-
       <Button onClick={() => processRequestWithContext()}>Process request</Button>
-      {/* <Button onClick={() => stopRequest()} variant="outline">Stop Request if available</Button> */}
 
       {error && <Box color="red">
         {error}
       </Box>}
 
-      <Text>{miscText}</Text>
+      <EnhancedMarkdown height={100} message={miscText}></EnhancedMarkdown>
 
       <Tabs value={"0"}>
         <Tabs.List>
