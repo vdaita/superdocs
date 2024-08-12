@@ -4,6 +4,10 @@ import EnhancedMarkdown from './lib/EnhancedMarkdown';
 import { VSCodeMessage } from './lib/VSCodeMessage';
 import { CopyBlock } from 'react-code-blocks';
 import axios from 'axios';
+import { createTwoFilesPatch } from 'diff';
+import { searchReplaceFormatSingleFile } from './lib/diff';
+import Groq from 'groq-sdk';
+import levenshtein from 'js-levenshtein';
 
 type Plan = {
   message: string
@@ -25,9 +29,10 @@ type Snippet = {
 export default function App(){
   let [query, setQuery] = useState("");
   let [snippets, setSnippets] = useState<Snippet[]>([]);
+  let [fileSnippets, setFileSnippets] = useState<Snippet[]>([]);
 
   // let [openaiApiKey, setOpenAIApiKey] = useState("");
-  let [serverUrl, setServerUrl] = useState("https://127.0.0.1:8000");
+  let [groqApiKey, setGroqApiKey] = useState("");
 
   let [plans, setPlans] = useState<Plan[]>([]);
 
@@ -38,6 +43,8 @@ export default function App(){
   let [candidateQueries, setCandidateQueries] = useState([]);
 
   let [loading, setLoading] = useState<boolean>(false);
+  let loadingRef = useRef<boolean>(false);
+
   let [abortController, setAbortController] = useState<AbortController | undefined>();
 
   let [miscText, setMiscText] = useState<string>("");
@@ -48,9 +55,8 @@ export default function App(){
       message = message.data;
       console.log("Received message: ", message);
       if(message.type === "context") {
-        if(message.content.serverUrl) {
-          
-          // setServerUrl(message.content.serverUrl);
+        if(message.content.groqApiKey) {
+          setGroqApiKey(message.content.groqApiKey);
         }
       } else if (message.type === "snippet") {
         console.log("Received snippet: ", message)
@@ -58,13 +64,6 @@ export default function App(){
           console.log("Considering adding a new snippet to this list of snippets: ", prevSnippets);
           let alreadyExists = false;
           for(var i = 0; i < prevSnippets.length; i++){
-            // console.log("Comparing: ", {
-            //   currFilepath: prevSnippets[i].filepath,
-            //   currCode: prevSnippets[i].code,
-            //   newFilepath: message.content.filepath,
-            //   newCode: message.content.code,
-            //   returning: prevSnippets[i].filepath === message.content.filepath && prevSnippets[i].code === message.content.code
-            // });
             if(prevSnippets[i].filepath === message.content.filepath && prevSnippets[i].code === message.content.code){
               alreadyExists = true;
               break;
@@ -82,9 +81,7 @@ export default function App(){
           }
         });
       } else if (message.type == "processRequest") { // going to be the same for single file or multiple files
-        if(message.content.whichContext === 'currentonly') {
-          processRequestWithSingleFile(message.content.snippets[0], message.content.query);
-        }
+        processRequestWithAllFiles(message.content.snippets, message.content.query, message.content.apiKey);
       }
     });
     VSCodeMessage.postMessage({
@@ -93,52 +90,161 @@ export default function App(){
     // TODO: listen for a change in the authentication state
   }, []);
 
-  let processRequestWithSingleFile = async(snippet: Snippet, query: string) => {
-    setLoading(true);
-    setMiscText("");
-    try {
-      console.log("Server url being used: ", serverUrl);
-      const url = 'http://0.0.0.0:8000/edit_request';
+  function parseSnippets(text: string) {
+      const linesArray = text.split('\n');
+      const snippetList: Snippet[] = [];
+      let activeSnippet: Snippet | undefined | null = null;
 
-      const data = {
-          "file_content": snippet.code,
-          "query": query
-      };
+      linesArray.forEach(currentLine => {
+          const cleanedLine = currentLine.trim();
 
-      const options = {
-          method: 'POST',
-          headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(data)
-      };
-
-      let responseFetch = await fetch(url, options)
-      let response = await responseFetch.json();
-  
-      // const text = response.data;
-      // console.log("Got text from the server: ", text);
-      // const jsonText = JSON.parse(text);
-
-      let formattedText = `Tokens generated: ${response['tokens_generated']}\nTime: ${response['time']}\nTokens per second: ${response['tokens_generated']/response['time']}\n\`\`\`\n${response['text']}\n\`\`\``;
-
-      setMiscText(formattedText);
-      // writeMergeFile(snippet.filepath, snippet.code, jsonText);
-
-      VSCodeMessage.postMessage({
-        type: "writeFile",
-        content: {
-          filepath: snippet.filepath,
-          code: response["text"]
-        }
+          // Detect the start of a new snippet by checking if the line ends with a file extension
+          if (cleanedLine.includes('.') && !cleanedLine.startsWith('```')) {
+              if (activeSnippet) {
+                  snippetList.push(activeSnippet);
+              }
+              activeSnippet = {
+                  filepath: cleanedLine,
+                  code: '',
+                  language: ''
+              };
+          } else if (cleanedLine.startsWith('```') && activeSnippet) {
+              if (!activeSnippet.language) {
+                  // Set the language (everything after the first backticks)
+                  activeSnippet.language = cleanedLine.replace(/```/g, '').trim();
+              } else {
+                  // End of code block
+                  snippetList.push(activeSnippet);
+                  activeSnippet = null;
+              }
+          } else if (activeSnippet && activeSnippet.language) {
+              // Add line to code block
+              activeSnippet.code += currentLine + '\n';
+          }
       });
-  
+
+      // Push the last snippet if it wasn't added yet
+      if (activeSnippet) {
+          snippetList.push(activeSnippet);
+      }
+
+      return snippetList.map(snippet => ({
+          ...snippet,
+          code: snippet.code.trim() // Trim extra newlines from code
+      }));
+  }
+
+  let processRequestWithAllFiles = async(snippets: Snippet[], query: string, groqApiKey: string) => { // Make sure that the currently opened file is first.
+    console.log("Loading ref value: ", loadingRef.current);
+
+    if(loadingRef.current){
+      console.log("Already processing request, doing nothing");
+      return;
+    }
+
+    console.log("File snippets: ", snippets);
+    
+    setLoading(true);
+    loadingRef.current = true;
+
+    setMiscText("");
+    console.log("Processing request");
+
+    let filesText = ""; // Estimate that each token is 4 chars long, then max 48 chars
+    if(snippets.length > 0){
+      filesText += `Currently open file: ${snippets[0].filepath}\n\n`;
+    }
+    snippets.forEach((snippet) => {
+      let potentialFile = `${snippet.filepath}\n\`\`\`\n${snippet.code}\n\`\`\``;
+      if(filesText.length + potentialFile.length <= 20000) {
+        filesText += "\n" + potentialFile;
+      }
+    });
+
+    setFileSnippets(snippets);
+
+    console.log("File string: ", filesText);
+
+    try {
+
+      console.log("Groq api key: ", groqApiKey);
+
+      let groqClient = new Groq({
+        apiKey: groqApiKey,
+        dangerouslyAllowBrowser: true
+      });
+      const chatCompletion = await groqClient.chat.completions.create({
+        messages: [{
+          "role": "system",
+          "content": `Act as an expert software developer.
+Take requests for changes to the supplied code. Fulfill the requests to the best of your ability. The user cannot chat with you beyond their request, so don't ask for confirmation or anything.
+
+Always reply to the user in the same language they are using.
+
+Once you understand the request you MUST:
+1. Determine if any code changes are needed.
+2. Explain any needed changes.
+3. If changes are needed, output a copy of each file that needs changes.
+
+To suggest changes to a file you MUST return the entire content of the updated file.
+You MUST use this *file listing* format:
+
+path/to/filename.js
+\`\`\`javascript
+// entire file content ...
+// ... goes in between
+\`\`\`
+# Files: \n ${filesText}
+
+
+Every *file listing* MUST use this format:
+- First line: the filename with any originally provided path
+- Second line: opening \`\`\`language
+- ... entire content of the file ...
+- Final line: closing \`\`\`
+
+To suggest changes to a file you MUST return a *file listing* that contains the entire content of the file.
+*NEVER* skip, omit or elide content from a *file listing* using "..." or by adding comments like "... rest of code..."!
+Create a new file you MUST return a *file listing* which includes an appropriate filename, including any appropriate path.
+
+`
+        }, {
+          "role": "user",
+          "content": `# Change request: ${query}`
+        }],
+        model: "llama3-8b-8192"
+      });
+
+      const groqResponse = chatCompletion.choices[0].message.content;
+      setMiscText(groqResponse!);
+
+      const generatedFiles = parseSnippets(groqResponse!);
+
+      console.log("Generated files: ", generatedFiles);
+
+      
+
+      // TODO: extract the code blocks and then iterate through each of them.
+      generatedFiles.forEach((genSnippet: Snippet) => {
+        let closestMatchFilepath = genSnippet.filepath;
+        let original = "";
+        let matchValue = 0.8;
+        snippets.forEach((snippet) => {
+          let levSim = 1 - (levenshtein(snippet.filepath, genSnippet.filepath) / Math.max(snippet.filepath.length, genSnippet.filepath.length));
+          if(levSim > matchValue) {
+            closestMatchFilepath = snippet.filepath;
+            original = snippet.code;
+            matchValue = levSim;
+          }
+        });
+
+      });
     } catch (e) {
       console.error("Error caught: ", e);
     }
   
     setLoading(false);
+    loadingRef.current = false;
   }
 
   let getMatchingLanguageFromFilepath = (filepath: string) => {
@@ -161,11 +267,22 @@ export default function App(){
   }
 
   let getCurrentFileAndProcessRequest = () => {
+
+    let newQuery = query;
+    if(snippets.length > 0){
+      newQuery += "\n User chosen snippets";
+      snippets.forEach((snippet: Snippet) => {
+        newQuery += `From snippet ${snippet.filepath}, \n \`\`\`\n ${snippet.code} \n\`\`\` \n`
+      });
+    }
+
+
     VSCodeMessage.postMessage({
-      type: "getCurrentOpenFile",
+      type: "getWorkspaceData",
       content: {
         runProcessRequest: true,
-        query: query
+        query: newQuery,
+        apiKey: groqApiKey
       }
     })
   }
@@ -191,9 +308,9 @@ export default function App(){
   }
 
   let processRequestWithContext = () => {
-    if (whichContext === "currentonly") {
-      getCurrentFileAndProcessRequest();
-    }
+    // if (whichContext === "currentonly") {
+    getCurrentFileAndProcessRequest();
+    // }
   }
 
   return (
@@ -202,17 +319,17 @@ export default function App(){
       </Textarea>
 
       {loading && <Box>
-        <Text style={{fontSize: 10}}>Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews.</Text>
+        <Text style={{fontSize: 10}}>Up to 40k characters are sent to the server. Need to refresh? Refresh the Webview by using Ctrl-Shift-P → Reload Webviews.</Text>
         <Loader/>
       </Box>}
       
-      {(!(whichContext === 'snippets') && snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
-      {!(whichContext === 'snippets') && <Container m="sm" opacity="80">
+      {(snippets.length > 0) && <Button variant='outline' onClick={() => setSnippets([])}>Clear Snippets</Button> }
+      {<Container m="sm" opacity="80">
         {snippets.map((item, index) => (
           <Card shadow="sm" padding="lg" radius="md" withBorder>
             <details>
               <summary>{item.filepath}</summary>
-              <EnhancedMarkdown height={100} message={`${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"}/>
+              <EnhancedMarkdown height={100} message={`${item.filepath}\n\n` + "```" + `${item.language}\n${item.code}` + "\n```"} fileSnippets={[]}/>
             </details>
             <Button onClick={() => deleteSnippet(index)}>
               Delete Snippet
@@ -222,17 +339,17 @@ export default function App(){
         {/* <Overlay opacity={0.6}/> */}
       </Container>}
 
-      {(whichContext === 'addall') && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
+      {(whichContext === 'currentonly') && <Text style={{fontSize: 10}}>Can't add snippets and everything from tabs at the same time.</Text>}
 
 
-      <Radio.Group
+      {/* <Radio.Group
         value={whichContext}
         onChange={setWhichContext}
         name="currentonly"
         withAsterisk
       >
         <Radio value="currentonly" label="Current File Only (fast model)"/>
-      </Radio.Group>
+      </Radio.Group> */}
 
       <Button onClick={() => processRequestWithContext()}>Process request</Button>
 
@@ -240,50 +357,7 @@ export default function App(){
         {error}
       </Box>}
 
-      <EnhancedMarkdown height={100} message={miscText}></EnhancedMarkdown>
-
-      <Tabs value={"0"}>
-        <Tabs.List>
-          {plans.map((item, index) => (
-            <Tabs.Tab value={index.toString()}>
-              Plan {index}
-            </Tabs.Tab>
-          ))}
-        </Tabs.List>
-        {plans.map((item, index) => (
-          <Box>
-            {/* {JSON.stringify(item)} */}
-            {item['message'] && <EnhancedMarkdown message={item['message']} height={60}/>}
-            {item["changes"] && <>
-            {
-              item["changes"].map((editItem, editIndex) => (
-                <Card>
-                  <Text style={{fontWeight: "bold"}}>{editItem.filepath}</Text>
-                  <Box m="sm" bg="red">
-                    Replace:
-                    <CopyBlock
-                      text={editItem.searchBlock}
-                      language={getMatchingLanguageFromFilepath(editItem.filepath)}
-                      wrapLongLines
-                    />
-                  </Box>
-                  <Box m="sm" bg="green">
-                    with: 
-                    <CopyBlock
-                      text={editItem.replaceBlock}
-                      language={getMatchingLanguageFromFilepath(editItem.filepath)}
-                      wrapLongLines
-                    />
-                  </Box>
-  
-                  <Button onClick={() => sendChange(editItem.filepath, editItem.searchBlock, editItem.replaceBlock)}>Accept change</Button>
-                </Card>
-              ))
-            }
-            </>}
-          </Box>
-        ))}
-      </Tabs>
+      <EnhancedMarkdown height={100} message={miscText} fileSnippets={fileSnippets}></EnhancedMarkdown>
     </Stack>
   );
 }

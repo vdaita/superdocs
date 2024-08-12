@@ -1,5 +1,6 @@
-import { ratio as fuzzRatio } from 'fuzzball';
+import { extract, ratio as fuzzRatio } from 'fuzzball';
 import { distance, closest } from 'fastest-levenshtein';
+import { createTwoFilesPatch } from 'diff';
 
 class Match {
     constructor(
@@ -121,8 +122,13 @@ function findBestMatch(queryCode: string, originalCode: string): Match {
     return bestMatch;
 }
 
-function extractCodeBlockData(mdText: string, language: string): string[] {
-    const startDelimiter = `\`\`\`${language}`;
+function extractCodeBlockData(mdText: string, language: string | undefined): string[] {
+    let startDelimiter;
+    if(language){
+        startDelimiter = `\`\`\`${language}`;
+    } else {
+        startDelimiter =  `\`\`\``;
+    }
     const endDelimiter = `\`\`\``;
     const blocks: string[] = [];
 
@@ -137,6 +143,24 @@ function extractCodeBlockData(mdText: string, language: string): string[] {
     }
 
     return blocks;
+}
+
+export function searchReplaceFormatSingleFile(originalCode: string, newCode: string) {
+    let generatedDiff = createTwoFilesPatch("", "", originalCode, newCode);
+    let diffBlocks = parseDiff(generatedDiff);
+    let fixedText = originalCode;
+    diffBlocks.forEach((srBlock) => {
+        let matchedSearch = findBestMatch(srBlock.searchBlock, originalCode).block;
+        if(matchedSearch.trim() === srBlock.replaceBlock.trim()){
+            return;
+        }
+        fixedText = fixedText.replace(matchedSearch, `<<<<<<< SEARCH
+${matchedSearch}
+=======
+${srBlock.replaceBlock}
+>>>>>>> REPLACE`);
+    });
+    return fixedText;
 }
 
 export function getFixedSearchReplace(files: Map<string, string>, diffMd: string): SearchReplaceChange[]{

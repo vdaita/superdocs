@@ -61,6 +61,13 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		let files: Snippet[] = [];
 		const workspaceDirectory = vscode.workspace.workspaceFolders![0].uri.path;
 
+		let activeDocument = vscode.window.activeTextEditor?.document;
+		let snippetFile: Snippet = {
+			filepath: path.relative(workspaceDirectory, activeDocument?.uri.fsPath!),
+			code: activeDocument?.getText()!,
+			language: activeDocument?.languageId!
+		};
+
 		for(const tabGroup of vscode.window.tabGroups.all){
 			for(const tab of tabGroup.tabs) {
 				if(tab.input instanceof vscode.TabInputText) {
@@ -70,11 +77,13 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					if(text.length > 34000) {
 						vscode.window.showInformationMessage(`Not including: ${document.fileName} - exceeds 17k char limit per file.`);
 					} else {
-						files.push({
-							filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
-							code: document.getText(),
-							language: document.languageId,
-						});
+						if(snippetFile.filepath !== path.relative(workspaceDirectory, tab.input.uri.fsPath)) {
+							files.push({
+								filepath: path.relative(workspaceDirectory, tab.input.uri.fsPath),
+								code: document.getText(),
+								language: document.languageId,
+							});
+						}
 						// if a file exceeds a certain character count, don't add it
 					}
 				}
@@ -82,7 +91,9 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 		}
 		// TODO: add a check for gitignore
 
-		return files;
+		let newFiles = [snippetFile, ...files];
+
+		return newFiles;
 	}
 
 	private documentListToMap(documents: Snippet[]) {
@@ -117,7 +128,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 					webviewView.webview.postMessage({
 						type: "context",
 						content: {
-							openaiApiKey: superdocsConfig.get("serverUrl")
+							groqApiKey: superdocsConfig.get("groqApiKey")
 						}
 					});
 					break;
@@ -132,7 +143,7 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 			} else if (data.type === "writeFile") {
 				// let joinedFilepath = path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath);
 				console.log("In writeFile: data submitted: ", data);
-				fs.writeFileSync(data.content.filepath, data.content.code);
+				fs.writeFileSync(path.join(vscode.workspace.workspaceFolders![0].uri.path, data.content.filepath), data.content.code);
 			} else if (data.type === "getWorkspaceData") {
 				(async () => {
 					let files = await this.getWorkspaceDocuments();
@@ -140,7 +151,8 @@ class WebviewViewProvider implements vscode.WebviewViewProvider {
 						type: "processRequest",
 						content: {
 							snippets: files,
-							query: data.content.query
+							query: data.content.query,
+							apiKey: data.content.apiKey
 						}
 					});
 				})();				
