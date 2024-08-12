@@ -2,8 +2,9 @@
   "name": "superdocs",
   "displayName": "superdocs",
   "description": "Agentic programming assistant",
-  "icon": "images/superdocslogo.png",
-  "version": "0.0.8-byok",
+  "icon": "superdocslogo.png",
+  "repository": "https://github.com/vdaita/superdocs",
+  "version": "0.0.8",
   "engines": {
     "vscode": "^1.83.0"
   },
